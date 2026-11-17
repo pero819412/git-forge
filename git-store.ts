@@ -7,6 +7,15 @@ export function oid(o:Obj){return sha(Buffer.concat([Buffer.from(`${o.type} ${o.
 // Each app owns its repositories; object IDs depend exclusively on canonical Git bytes.
 export class Repo {
  objects=new Map<string,Obj>(); refs=new Map<string,string>(); head='refs/heads/main';
+ // Only complete, successfully traversed immutable object graphs enter this set.
+ // Weak references keep validation metadata bounded by the live object store.
+ private validated=new WeakSet<Obj>();
+ fetchCache?:{key:string,version:number,parts:Buffer[]};
+ validate(tip:string){
+  const seen=new Set<string>(),pending:Obj[]=[];
+  const visit=(id:string)=>{const o=this.objects.get(id);if(!o)throw Error('missing object');if(this.validated.has(o)||seen.has(id))return;seen.add(id);pending.push(o);for(const c of this.links(id))visit(c);};
+  visit(tip);for(const o of pending)this.validated.add(o);
+ }
  put(o:Obj){const id=oid(o);this.objects.set(id,o);return id;}
  parents(id:string){const o=this.objects.get(id);return o?.type==='commit'?[...o.data.toString().split('\n\n')[0].matchAll(/^parent ([a-f0-9]{40})$/gm)].map(m=>m[1]):[];}
  links(id:string,parents=true){const o=this.objects.get(id);if(!o)throw Error('missing object');

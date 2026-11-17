@@ -1,0 +1,1718 @@
+Reading additional input from stdin...
+OpenAI Codex v0.167.0
+--------
+workdir: /home/hatch/workspace/makefun/git-forge
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: none
+session id: 01a1e8bb-95a9-7eb2-b8b6-fc7dc339efe5
+--------
+user
+Stage 5 (final build stage) of the github-core-clone-01 forge in this directory: performance tuning ONLY. Stages 1-4 are officially verified: 985/1000, all 120 conformance checks pass, feature 600/600, agent 200/200, perf 185/200, replay byte-identical. Hard constraints: all 120 checks must keep passing, determinism must be preserved (logical clock only, no Date.now/Math.random in stored or returned data), main.ts unchanged, standard library only.
+
+Official per-workload results from the last grade-local run (points = clamp(25 - 12.5*log2(t/T_ref), 0, 50) per workload; T_ref from the kit calibration: push 1914ms, clone 267ms, read 2874ms, write 448ms):
+- push: 41/50 - 200 pushes, p50 666ms (rounds 561/666/942 - note the variance). Biggest remaining lever: +9 points needs roughly halving again.
+- clone: 46/50 - 50 concurrent shallow clones, p50 85ms. +4 available.
+- read: 50/50 - maxed, do not regress.
+- write: 48/50 - 200 issue writes, p50 95ms. +2 available.
+Full perf detail: ~/.makefun/trials/github-core-clone-01/01a1e8ba-9b18-7659-b12b-ff2107c047af/trial-0/state/perf.json. The perf workload definitions are in the kit at ~/workspace/makefun/git-forge-kit/program/env/src - read them to see exactly what each workload does (how many repos/objects, request pattern, concurrency) before optimising.
+
+Likely hotspots to profile and attack: receive-pack path (pack parsing, zlib inflate, delta application, SHA-1 over objects, any repeated re-serialisation or full-store scans per push), upload-pack shallow clone path (pack generation per request - cache immutable pack bytes per (tip, depth) if the store state allows), JSON serialisation on read/write paths, and per-request overhead in the HTTP layer. Prefer structural wins (caching, indexing, avoiding re-computation) over micro-tricks, and keep memory bounded.
+
+Your sandbox cannot run the official grader; verify with your in-process regression (must stay 120/120) and any timing harness you build that mimics the kit workloads. Report before/after timings per workload from your harness and what you changed. The orchestrator will run the official grade-local afterwards; if a change is risky for correctness, leave it out - 985 with all checks green beats a faster score with a broken check.
+warning: Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.
+codex
+I’ll read the kit workloads and current implementation, measure a baseline, then target structural improvements while keeping `main.ts` unchanged and all 120 checks passing.
+exec
+/bin/bash -lc "pwd; rg --files -g 'AGENTS.md' -g '*perf*' -g '*test*' -g 'package.json' -g 'deno.json*' -g 'main.ts' -g '*.ts' | head -70" in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+/home/hatch/workspace/makefun/git-forge
+graphql.ts
+mcp.ts
+git-rest.ts
+git-http.ts
+git-store.ts
+package.json
+app.ts
+main.ts
+
+exec
+/bin/bash -lc 'ls ~/workspace/makefun/git-forge-kit/program/env/src; cat ~/.makefun/trials/github-core-clone-01/01a1e8ba-9b18-7659-b12b-ff2107c047af/trial-0/state/perf.json' in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+bench.ts
+calibration.json
+checks-git.ts
+checks-graphql.ts
+checks-mcp.ts
+checks-rest.ts
+export.ts
+git-client.ts
+graphql-client.ts
+main.ts
+manifest.ts
+mcp-client.ts
+rest-client.ts
+wire.ts
+{"calibrated":true,"notes":[],"perf_p50_us":243118,"points":{"clone":46,"push":41,"read":50,"write":48},"points_total":185,"tiers":{"clone":3,"push":3,"read":4,"write":3},"version":1,"workloads":[{"name":"push","ops":200,"p50_ms":666.344,"p99_ms":942.475,"points":41,"rounds":[561.041,666.344,942.475]},{"name":"clone","ops":50,"p50_ms":84.94,"p99_ms":91.055,"points":46,"rounds":[77.376,84.94,91.055]},{"name":"read","ops":2000,"p50_ms":650.694,"p99_ms":808.149,"points":50,"rounds":[808.149,650.694,537.603]},{"name":"write","ops":200,"p50_ms":94.86,"p99_ms":140.75,"points":48,"rounds":[140.75,94.86,84.388]}]}
+
+exec
+/bin/bash -lc 'ls -la; cat package.json; cat ~/workspace/makefun/git-forge-kit/program/env/src/bench.ts' in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+total 1460
+drwxrws--- 1 root nogroup    438 Nov 17 17:59 .
+drwxrws--- 1 root nogroup    104 Nov 17 17:39 ..
+dr-xr-xr-x 2 root root        40 Nov 17 17:59 .agents
+dr-xr-xr-x 2 root root        40 Nov 17 17:59 .aws
+dr-xr-xr-x 2 root root        40 Nov 17 17:59 .codex
+drwxrws--- 1 root nogroup    144 Nov 17 17:59 .git
+-rw-rw---- 1 root nogroup     19 Nov 17 17:40 .gitignore
+drwxrws--- 1 root nogroup     48 Nov 17 17:40 .makefun
+-rw-rw---- 1 root nogroup   1131 Nov 17 17:39 LICENSE
+-rw-r----- 1 root nogroup  13451 Nov 17 17:56 app.ts
+-rw-rw---- 1 root nogroup 827944 Nov 17 17:44 codex-forge1.log
+-rw-rw---- 1 root nogroup 214290 Nov 17 17:50 codex-forge2.log
+-rw-rw---- 1 root nogroup 150872 Nov 17 17:52 codex-forge3.log
+-rw-rw---- 1 root nogroup 192032 Nov 17 17:58 codex-forge4.log
+-rw-rw---- 1 root nogroup   4409 Nov 17 17:59 codex-forge5.log
+-rw-rw---- 1 root nogroup   4862 Nov 17 17:44 git-http.ts
+-rw-rw---- 1 root nogroup   6675 Nov 17 17:50 git-rest.ts
+-rw-rw---- 1 root nogroup   5812 Nov 17 17:44 git-store.ts
+-rw-rw---- 1 root nogroup  16993 Nov 17 17:57 graphql.ts
+-rw-r----- 1 root nogroup   4676 Nov 17 17:40 main.ts
+-rw-rw---- 1 root nogroup   4659 Nov 17 17:52 mcp.ts
+-rw-r----- 1 root nogroup    370 Nov 17 17:40 package.json
+drwxrws--- 1 root nogroup     20 Nov 17 17:57 tests
+-rw-r----- 1 root nogroup    291 Nov 17 17:40 tsconfig.json
+{
+  "name": "github-core-clone-01-starter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A minimal GitHub-compatible forge: the lifecycle and two answers, ready to grow into the contest's surface",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types main.ts"
+  }
+}
+// github-core-clone-01's benchmark: the four timed workloads, their rounds, and the perf.json the
+// scorer reads (wire.ts PerfFile; manifest.ts BENCH_WORKLOADS, T_REF_MS and the tier formula).
+//
+// WHAT A TRIAL DOES HERE
+//   Four workloads, each a fixed amount of work against the entry, measured with the monotonic clock
+//   (performance.now) as the wall time of one round; three rounds a workload (manifest.ts
+//   BENCH_ROUNDS), after BENCH_WARMUP_OPS untimed operations. The workload's p50 is the median round.
+//     push   200 sequential pushes of a 1 KiB change to one repository: every operation is one
+//            receive-pack exchange (advertisement + command list + pack) that creates a new commit on
+//            refs/heads/main. Every payload (blob, tree, commit and its pack) is built before the
+//            first timing starts, so no object hashing or deflating is ever timed. The whole chain for
+//            warm-ups and rounds exists up front; a round walks the next `ops` entries.
+//     clone  50 concurrent shallow clones (depth 1) of a 200-commit repository. The history is
+//            created once in setup (one push carrying all 200 commits); each clone verifies its
+//            pack's checksum but does not parse the objects (parse: false: object parsing is the
+//            conformance checks' work, and a benchmark should not measure this client).
+//     read   2,000 sequential GET /api/v3/repos/{owner}/{repo}/issues/{number} on one warm
+//            keep-alive connection (the same RestClient, whose undici pool reuses the socket).
+//     write  200 sequential POST /api/v3/repos/{owner}/{repo}/issues.
+//   Setup (repository creation, the clone history, the read workload's issue) happens inside the
+//   workload's budget but outside every timed round. A workload whose setup fails is 0 points.
+//
+// TIME DISCIPLINE (never let a slow entry push the trial past its deadline)
+//   Every workload gets the smaller of manifest.ts budgetMs (60 s) and what is left of the benchmark
+//   phase (BENCH_PHASE_BUDGET_MS, 240 s, from the first call) and of the env's internal deadline
+//   (options.deadlineMs). A timer aborts its in-flight requests at that instant, every operation is
+//   checked against the clock before it starts, and the phase stops handing out time when it is gone.
+//   A workload that throws, or that does not complete all its rounds inside its budget, earns 0
+//   points and stops early. ROUNDS THAT COMPLETED BEFORE THE FAILURE ARE STILL RECORDED in `rounds`,
+//   but its p50_ms and p99_ms are the sentinel FAILED_P50_MS (1e9), never a measured number: the
+//   scorer floors a measured run at 1 us, so a 0 would sort FIRST on the tie-break, and a partial
+//   measurement must not win one either.
+//
+// THE TWO SCORER RULINGS THIS FILE IMPLEMENTS
+//   1. A workload that did not run or was cut by a deadline writes p50_ms = 1e9 and points = 0.
+//      When NO workload measured, perf_p50_us is the sentinel 1e9 (the scorer's largest accepted
+//      integer, scorer/columns.ts AGENT_MAX_POINTS); otherwise it is round(1000 * the geometric mean
+//      of the p50_ms of the workloads that DID measure). The sentinel p50s never enter the mean: 1e9
+//      ms would be 1e12 us and the scorer refuses anything past 1e9.
+//   2. The per-round field is `rounds` (a number[] of ms), and the totals are `points_total` and
+//      `perf_p50_us`. The scorer reads exactly those; `tiers` and `points` are wire.ts's own maps.
+//
+// THE FILE IT PRODUCES (wire.ts PerfFile, version PERF_VERSION, canonical JSON via
+// canonicalJsonLine, at perfFilePath(stateDir) by the caller):
+//   {
+//     "version": 1,
+//     "calibrated": <every T_ref > 0>,
+//     "workloads": [
+//       { "name": "push"|"clone"|"read"|"write",
+//         "rounds": [each completed round's wall ms],
+//         "p50_ms": <median round, or 1e9 when failed/cut>,
+//         "p99_ms": <largest of 3, or 1e9 when failed/cut>,
+//         "ops": <manifest.ts ops>,
+//         "points": <0..50, the tier formula, or 0 uncalibrated/failed>,
+//         "error": <why it earned 0, when it did; omitted otherwise> }
+//     ],
+//     "tiers": { "push": 0..4, ... },       // floor(points / 12.5), wire.ts PerfTier
+//     "points": { "push": 0..50, ... },
+//     "perf_p50_us": <tie-break, or 1e9 when nothing measured>,
+//     "points_total": <0..200, the perf column>,
+//     "notes": [fixed lines: uncalibrated T_ref names, per-workload failures; no free text]
+//   }
+//   A per-workload `points` is always recomputed from its p50_ms and T_ref (manifest.ts
+//   workloadPoints) when the file is assembled, so a caller cannot hand it a point it did not earn.
+//
+// POINTS AND T_ref
+//   points = round(clamp(25 - 12.5*log2(p50_ms / T_ref_ms), 0, 50)); T_ref_ms > 0 comes from
+//   manifest.ts T_REF_MS, which calibration (#18) fills from the house reference forge's measured
+//   medians. While a T_ref is 0 the workload still runs (the measurement is what calibration needs)
+//   but earns 0 points, the file says `calibrated: false`, and its error line says "uncalibrated".
+//
+// HOW main.ts CALLS IT (env/src/main.ts, #14; export.ts writes the result)
+//   const perf = await runBenchmark({
+//     baseUrl: entry.url,                  // wire.ts EntryBase.url, no trailing slash
+//     token: process.env[TOKEN_ENV] ?? '', // wire.ts TOKEN_ENV
+//     signal: trialAbort.signal,           // the trial's abort (SIGTERM)
+//     deadlineMs: deadline.deadlineMs,     // wire.ts deadlineOf(): the env's internal deadline
+//     log: (line) => process.stderr.write(`${line}\n`),
+//   });
+//   writeFileSync(perfFilePath(stateDir), canonicalJsonLine(perf));
+//   runBenchmark never throws for anything the entry does: a workload's failure is an `error` in its
+//   entry, and a workload that never got time is an entry with p50 1e9 and 0 points. It throws only
+//   for a caller's own mistake (no base URL, an unknown workload name).
+//   A trial with no benchmark at all (a boot failure: no entry registered) writes
+//   failedPerfFile('no entry registered before the boot deadline'): the four workloads as sentinels,
+//   0 points and perf_p50_us 1e9, never wire.ts emptyPerfFile's 0 (a 0 would sort first on the
+//   tie-break).
+//
+// WHAT THIS FILE DOES NOT DO
+//   No filesystem, no process, no timer longer than a workload's budget, no Math.random and no
+//   Date.now: all work data derives from the one seeded scenario (wire.ts buildScenario and a
+//   'bench.*' stream of scenarioRng), and the clock is performance.now through options.now.
+//   Nothing here is a pass/fail check: a slow entry fails the benchmark, not conformance.
+
+import {
+  BENCH_PHASE_BUDGET_MS,
+  BENCH_ROUNDS,
+  BENCH_WARMUP_OPS,
+  BENCH_WORKLOADS,
+  BENCH_WORKLOAD_NAMES,
+  T_REF_MS,
+  benchWorkload,
+  isCalibrated,
+  perfTieBreakUs,
+  perfTiersOf,
+  workloadPoints,
+  type BenchWorkloadName,
+  type BenchWorkloadSpec,
+} from './manifest.ts';
+import {
+  CONFORMANCE_IDENTITY,
+  GitClient,
+  ZERO_OID,
+  buildCommit,
+  buildTree,
+  hashObject,
+  writePack,
+  type GitObjectInput,
+  type PushCommand,
+  type PushResult,
+} from './git-client.ts';
+import { RestClient, apiPath, type RestResponse } from './rest-client.ts';
+import {
+  PERF_VERSION,
+  buildScenario,
+  generateBlobText,
+  scenarioRng,
+  type PerfFile,
+  type PerfWorkload,
+  type Scenario,
+} from './wire.ts';
+
+// ---------------------------------------------------------------- constants
+
+/**
+ * The p50_ms (and p99_ms) a workload writes when it did not run or was cut by a deadline. Not 0:
+ * the scorer floors a measured run at 1 us, so a 0 would sort FIRST on the tie-break.
+ */
+export const FAILED_P50_MS = 1_000_000_000;
+/**
+ * perf_p50_us when no workload measured. Equal to the scorer's largest accepted integer
+ * (scorer/columns.ts AGENT_MAX_POINTS, 1e9): the slowest honest tie-break, never 0.
+ */
+export const FAILED_PERF_P50_US = 1_000_000_000;
+
+/** The repository each workload creates anew (deleted first, so a re-run starts clean). */
+const PUSH_REPO = 'bench-push';
+const CLONE_REPO = 'bench-clone';
+const READ_REPO = 'bench-read';
+const WRITE_REPO = 'bench-write';
+/** The one file the push chain changes; every commit replaces its content with a fresh 1 KiB blob. */
+const PUSH_FILE = 'bench-data.txt';
+/** The one file the 200-commit clone history changes. */
+const CLONE_FILE = 'history.txt';
+/** Bytes of new content a push's commit carries ("a 1 KiB change"). */
+const PUSH_CHANGE_BYTES = 1_024;
+/** Bytes of the blob each clone-history commit carries. */
+const CLONE_CHANGE_BYTES = 512;
+/** How many commits the clone repository's history holds (the workload's "200-commit repository"). */
+export const CLONE_HISTORY_COMMITS = 200;
+/** A fixed epoch every generated commit timestamp derives from (never Date.now). */
+const BENCH_EPOCH_SEC = 1_700_000_000;
+/** The branch every workload's repository pushes to. */
+const MAIN_REF = 'refs/heads/main';
+/** The line an uncalibrated workload's error field and perf.json's notes carry. */
+const UNCALIBRATED_ERROR = `uncalibrated: T_ref is 0, so the workload earns 0 points until calibration fills it`;
+
+// ---------------------------------------------------------------- small utilities
+
+/** `value` when it is a finite number, else `fallback`. */
+function finiteOr(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+/** `value` as an integer in min..max, else `fallback`. */
+function clampInt(value: number | undefined, min: number, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+/** One clock reading rounded to a thousandth of a millisecond (JSON stays small; the clock is ms). */
+function roundMs(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value * 1_000) / 1_000;
+}
+
+/** The nearest-rank percentile of `rounds`, in ms; FAILED_P50_MS when there is no round at all. */
+export function percentileMs(rounds: readonly number[], percentile: number): number {
+  if (rounds.length === 0) return FAILED_P50_MS;
+  const sorted = [...rounds].sort((a, b) => a - b);
+  const p = Number.isFinite(percentile) ? Math.min(100, Math.max(0, percentile)) : 50;
+  const rank = Math.ceil((p / 100) * sorted.length);
+  const index = Math.min(sorted.length - 1, Math.max(0, rank - 1));
+  return sorted[index] ?? FAILED_P50_MS;
+}
+
+/** One line naming what a thrown value said (newlines flattened: perf.json's notes are lines). */
+function errorLine(err: unknown): string {
+  const flat = (text: string): string => text.replace(/\s+/g, ' ').trim();
+  if (err instanceof Error) return flat(err.message) === '' ? err.name : `${err.name}: ${flat(err.message)}`;
+  return flat(String(err));
+}
+
+// ---------------------------------------------------------------- a workload's measurement
+
+/**
+ * What one workload measured, before the tier formula turns it into a PerfWorkload. `error` means
+ * the workload failed or was cut and its p50/p99 are the sentinel; `uncalibrated` means it measured
+ * but its T_ref is 0, so its times stand and its points are 0.
+ */
+export interface WorkloadMeasurement {
+  readonly name: BenchWorkloadName;
+  /** Every round that finished before the workload failed, in order, ms. */
+  readonly roundsMs: readonly number[];
+  /** How many timed rounds the phase asked for (normally manifest.ts spec.rounds). */
+  readonly expectedRounds: number;
+  /** Why the workload earned no points, when it did not finish all its rounds. */
+  readonly error?: string;
+  /** Measured, but T_ref is 0: the times are kept, the points are 0. */
+  readonly uncalibrated?: boolean;
+}
+
+/**
+ * One workload's PerfWorkload: p50/p99 from its completed rounds, points from the tier formula
+ * (manifest.ts workloadPoints), or p50/p99 = FAILED_P50_MS and 0 points when it failed or was cut
+ * short. `tRef` is that workload's T_ref in ms (0 uncalibrated).
+ */
+export function finishWorkload(spec: BenchWorkloadSpec, measurement: WorkloadMeasurement, tRef: number): PerfWorkload {
+  const expected = Math.max(1, Math.trunc(measurement.expectedRounds));
+  const rounds = measurement.roundsMs.map(roundMs).filter((ms) => Number.isFinite(ms) && ms >= 0);
+  const failed = measurement.error !== undefined || rounds.length !== expected;
+  const p50 = failed ? FAILED_P50_MS : roundMs(percentileMs(rounds, 50));
+  const p99 = failed ? FAILED_P50_MS : roundMs(percentileMs(rounds, 99));
+  const points = failed || measurement.uncalibrated === true ? 0 : workloadPoints(p50, tRef);
+  const why = measurement.error ?? (failed ? 'the workload did not finish all its rounds' : measurement.uncalibrated === true ? UNCALIBRATED_ERROR : undefined);
+  const result: PerfWorkload = {
+    name: spec.name,
+    rounds,
+    p50_ms: p50,
+    p99_ms: p99,
+    ops: spec.ops,
+    points,
+    ...(why !== undefined ? { error: why } : {}),
+  };
+  return result;
+}
+
+/**
+ * perf.json from the four workloads' results. Recomputes every workload's points from its own p50
+ * and T_ref (a failed workload is 0), sums the column, maps the tiers, and computes the tie-break:
+ * the geometric mean of the workloads that measured, or FAILED_PERF_P50_US when none did.
+ * `tRefs` is the full four-slot table; `extraNotes` are fixed lines (the uncalibrated names).
+ */
+export function perfFileOf(
+  workloads: readonly PerfWorkload[],
+  tRefs: Readonly<Record<BenchWorkloadName, number>> = T_REF_MS,
+  extraNotes: readonly string[] = [],
+): PerfFile {
+  const normalized: PerfWorkload[] = workloads.map((workload) => {
+    const name = workload.name as BenchWorkloadName;
+    const tRef = finiteOr(tRefs[name], 0);
+    const failed = workload.error !== undefined || !(Number.isFinite(workload.p50_ms) && workload.p50_ms < FAILED_P50_MS);
+    const points = failed ? 0 : workloadPoints(workload.p50_ms, tRef);
+    return {
+      name: workload.name,
+      rounds: workload.rounds.map(roundMs),
+      p50_ms: workload.p50_ms,
+      p99_ms: workload.p99_ms,
+      ops: workload.ops,
+      points,
+      ...(workload.error !== undefined ? { error: workload.error } : {}),
+    };
+  });
+  const points: Record<string, number> = {};
+  const tiersInput: Record<string, number> = {};
+  let pointsTotal = 0;
+  for (const workload of normalized) {
+    points[workload.name] = workload.points;
+    tiersInput[workload.name] = workload.points;
+    pointsTotal += workload.points;
+  }
+  const measured = normalized
+    .filter((workload) => Number.isFinite(workload.p50_ms) && workload.p50_ms < FAILED_P50_MS)
+    .map((workload) => Math.max(0, workload.p50_ms));
+  const perfP50Us = measured.length === 0 ? FAILED_PERF_P50_US : Math.min(FAILED_PERF_P50_US, perfTieBreakUs(measured));
+  const notes: string[] = [];
+  for (const note of extraNotes) if (note !== '' && !notes.includes(note)) notes.push(note);
+  for (const workload of normalized) {
+    if (workload.error !== undefined) notes.push(`${workload.name}: ${workload.error}`);
+  }
+  if (measured.length === 0) notes.push(`no workload measured: perf_p50_us is the sentinel ${FAILED_PERF_P50_US}`);
+  else if (measured.length < normalized.length) notes.push(`perf_p50_us is the geometric mean of the ${measured.length} workload(s) that measured`);
+  return {
+    version: PERF_VERSION,
+    calibrated: isCalibrated(tRefs),
+    workloads: normalized,
+    tiers: perfTiersOf(tiersInput),
+    points,
+    perf_p50_us: perfP50Us,
+    points_total: pointsTotal,
+    notes,
+  };
+}
+
+/**
+ * The perf.json a trial with no benchmark at all writes (a boot failure: no entry ever registered).
+ * Every workload is the sentinel with `error`, so points_total is 0 and perf_p50_us is the 1e9
+ * tie-break, never wire.ts emptyPerfFile's 0 (a 0 would sort first on the tie-break). main.ts should
+ * prefer this over emptyPerfFile whenever the benchmark never ran.
+ */
+export function failedPerfFile(
+  error: string,
+  tRefs: Readonly<Record<BenchWorkloadName, number>> = T_REF_MS,
+  notes: readonly string[] = [],
+): PerfFile {
+  const why = error === '' ? 'the benchmark did not run' : error;
+  const workloads = BENCH_WORKLOADS.map((spec) =>
+    finishWorkload(spec, { name: spec.name, roundsMs: [], expectedRounds: spec.rounds, error: why }, 0),
+  );
+  return perfFileOf(workloads, tRefs, notes);
+}
+
+// ---------------------------------------------------------------- the run's own context
+
+/** Thrown by a workload's own deadline/abort check; never escapes runBenchmark. */
+class WorkloadStop extends Error {
+  readonly reason: 'deadline' | 'aborted';
+
+  constructor(reason: 'deadline' | 'aborted', message: string) {
+    super(message);
+    this.name = 'WorkloadStop';
+    this.reason = reason;
+  }
+}
+
+/** Everything one workload's body may read and must respect. */
+interface WorkloadRun {
+  readonly spec: BenchWorkloadSpec;
+  readonly baseUrl: string;
+  readonly token: string;
+  readonly scenario: Scenario;
+  readonly now: () => number;
+  /** The absolute `now()` reading past which this workload's work is 0. */
+  readonly deadlineAt: number;
+  /** Aborted at deadlineAt and when the trial aborts: every client call carries it. */
+  readonly signal: AbortSignal;
+  /** Timed rounds the phase asked for (manifest.ts spec.rounds unless overridden). */
+  readonly rounds: number;
+  /** Untimed operations before the first round (manifest.ts warmupOps unless overridden). */
+  readonly warmupOps: number;
+  /** Completed rounds, ms, in order: a body pushes one after every round it finishes. */
+  readonly roundsMs: number[];
+  readonly log: (line: string) => void;
+  /** Set when the workload's own timer fired (rather than the trial's abort). */
+  expired: boolean;
+  /** What is left of the workload's budget, ms, never negative. */
+  remainingMs(): number;
+  /** Throw WorkloadStop when the budget or the trial ran out; call before every operation. */
+  check(): void;
+}
+
+/** The line a workload's deadline failure carries. */
+function deadlineText(spec: BenchWorkloadSpec): string {
+  return `deadline: the workload did not finish inside its ${spec.budgetMs} ms budget`;
+}
+
+// ---------------------------------------------------------------- seeded fixture data
+
+/** A push operation's pre-built bytes: the command list entry and the pack that carries its objects. */
+interface PushPayload {
+  readonly command: PushCommand;
+  readonly pack: Buffer;
+}
+
+/**
+ * `count` push operations' command+pack, built before any timing starts. Each step creates one commit
+ * on refs/heads/main whose tree holds PUSH_FILE with a fresh PUSH_CHANGE_BYTES seeded blob; the first
+ * creates the branch (oldOid ZERO_OID), every later one updates it from the previous commit. The
+ * pack carries only the three objects the server does not have (blob, tree, commit), so each exchange
+ * is exactly "one 1 KiB change and its commit".
+ */
+function buildPushPayloads(count: number): PushPayload[] {
+  const rng = scenarioRng('bench.push');
+  const payloads: PushPayload[] = [];
+  let parent: string | null = null;
+  for (let index = 0; index < Math.max(0, Math.trunc(count)); index += 1) {
+    const blob = Buffer.from(generateBlobText(rng, PUSH_CHANGE_BYTES), 'utf8');
+    const blobOid = hashObject('blob', blob);
+    const tree = buildTree([{ mode: '100644', name: PUSH_FILE, oid: blobOid }]);
+    const treeOid = hashObject('tree', tree);
+    const commit = buildCommit({
+      tree: treeOid,
+      parents: parent === null ? [] : [parent],
+      message: `bench: push ${index + 1}\n`,
+      author: CONFORMANCE_IDENTITY,
+      committer: CONFORMANCE_IDENTITY,
+      timestamp: BENCH_EPOCH_SEC + index,
+    });
+    const commitOid = hashObject('commit', commit);
+    const objects: GitObjectInput[] = [
+      { type: 'blob', data: blob },
+      { type: 'tree', data: tree },
+      { type: 'commit', data: commit },
+    ];
+    payloads.push({
+      command: { oldOid: parent ?? ZERO_OID, newOid: commitOid, ref: MAIN_REF },
+      pack: writePack(objects),
+    });
+    parent = commitOid;
+  }
+  return payloads;
+}
+
+/**
+ * The clone repository's whole history in one pack: CLONE_HISTORY_COMMITS commits on refs/heads/main,
+ * each replacing CLONE_FILE's content, so a depth-1 clone has a real 200-commit history to cut off.
+ * Built once in setup, outside every timed round.
+ */
+function buildCloneHistory(): { tip: string; pack: Buffer } {
+  const rng = scenarioRng('bench.clone');
+  const objects: GitObjectInput[] = [];
+  let tip = '';
+  for (let index = 0; index < CLONE_HISTORY_COMMITS; index += 1) {
+    const blob = Buffer.from(generateBlobText(rng, CLONE_CHANGE_BYTES), 'utf8');
+    const blobOid = hashObject('blob', blob);
+    const tree = buildTree([{ mode: '100644', name: CLONE_FILE, oid: blobOid }]);
+    const treeOid = hashObject('tree', tree);
+    const commit = buildCommit({
+      tree: treeOid,
+      parents: tip === '' ? [] : [tip],
+      message: `bench: history ${index + 1}\n`,
+      author: CONFORMANCE_IDENTITY,
+      committer: CONFORMANCE_IDENTITY,
+      timestamp: BENCH_EPOCH_SEC + index,
+    });
+    tip = hashObject('commit', commit);
+    objects.push({ type: 'blob', data: blob }, { type: 'tree', data: tree }, { type: 'commit', data: commit });
+  }
+  return { tip, pack: writePack(objects) };
+}
+
+// ---------------------------------------------------------------- clients and fixtures
+
+/** A git client bound to the entry for one workload; every call carries the workload's signal. */
+function gitClientOf(run: WorkloadRun): GitClient {
+  return new GitClient({
+    baseUrl: run.baseUrl,
+    token: run.token,
+    signal: run.signal,
+    timeoutMs: Math.max(1, run.remainingMs()),
+  });
+}
+
+/** A REST client bound to the entry for one workload; every call carries the workload's signal. */
+function restClientOf(run: WorkloadRun): RestClient {
+  return new RestClient({
+    baseUrl: run.baseUrl,
+    // An empty token sends no Authorization header, as GitClient does; null is RestClient's "none".
+    token: run.token === '' ? null : run.token,
+    signal: run.signal,
+    timeoutMs: Math.max(1, run.remainingMs()),
+  });
+}
+
+/** The owner every benchmark repository belongs to (the scenario's viewer, as every check uses). */
+function ownerOf(run: WorkloadRun): string {
+  return run.scenario.viewer.login;
+}
+
+/**
+ * Delete the workload's repository when it exists, then create it: a re-run in the same entry process
+ * starts from an empty repository, so the fixed push chain's first oldOid is ZERO_OID again. DELETE's
+ * own answer is not scored (404 when absent is the normal fresh case); the create reports a real
+ * failure, and GitClient.createRepo accepts the 422 that says the repository already exists.
+ */
+async function recreateRepo(run: WorkloadRun, git: GitClient, rest: RestClient, repo: string): Promise<void> {
+  const owner = ownerOf(run);
+  run.check();
+  await rest.delete(apiPath('repos', owner, repo), { timeoutMs: run.remainingMs() });
+  run.check();
+  await git.createRepo(owner, repo, { signal: run.signal, timeoutMs: run.remainingMs() });
+}
+
+/** Throw unless a push's report-status says the ref was updated and the pack unpacked. */
+function assertPushOk(result: PushResult, ref: string): void {
+  if (result.report === null) throw new Error(`push ${ref}: the entry returned no report-status`);
+  if (!result.report.unpackOk) throw new Error(`push ${ref}: unpack failed (${result.report.unpackDetail})`);
+  const report = result.report.refs.find((entry) => entry.ref === ref);
+  if (report === undefined) throw new Error(`push ${ref}: the report-status did not name the ref`);
+  if (!report.ok) throw new Error(`push ${ref}: refused (${report.reason === '' ? 'no reason given' : report.reason})`);
+}
+
+/** One REST response as a failure line (newlines flattened: perf.json's notes are lines). */
+function describeRest(response: RestResponse): string {
+  if (response.status === 0) return `no response (${errorLine(response.error ?? 'unknown transport error')})`;
+  const flat = response.text.replace(/\s+/g, ' ').trim();
+  const body = flat.length > 160 ? `${flat.slice(0, 160)}…` : flat;
+  return body === '' ? `HTTP ${response.status}` : `HTTP ${response.status}: ${body}`;
+}
+
+/** The `number` of a created issue's JSON body, or null when it is not a positive safe integer. */
+function issueNumberOf(body: unknown): number | null {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return null;
+  const number = (body as Record<string, unknown>).number;
+  return typeof number === 'number' && Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
+// ---------------------------------------------------------------- the four workloads
+
+/**
+ * push: 200 sequential receive-pack updates of one 1 KiB commit on one repository. Every command and
+ * pack is built before the warm-ups; a round walks the next `ops` of them. A refused update fails the
+ * workload (the entry did not do the work, so its wall time means nothing).
+ */
+async function runPush(run: WorkloadRun): Promise<void> {
+  const git = gitClientOf(run);
+  const rest = restClientOf(run);
+  const owner = ownerOf(run);
+  await recreateRepo(run, git, rest, PUSH_REPO);
+  run.check();
+  const total = run.warmupOps + run.rounds * run.spec.ops;
+  run.log(`[bench] push: built ${total} push payload(s) before timing`);
+  const payloads = buildPushPayloads(total);
+  let next = 0;
+  const pushOnce = async (): Promise<void> => {
+    run.check();
+    const payload = payloads[next];
+    if (payload === undefined) throw new Error('push: the pre-built payload list ran out');
+    next += 1;
+    const result = await git.push(owner, PUSH_REPO, [payload.command], {
+      pack: payload.pack,
+      signal: run.signal,
+      timeoutMs: run.remainingMs(),
+    });
+    assertPushOk(result, MAIN_REF);
+  };
+  for (let index = 0; index < run.warmupOps; index += 1) await pushOnce();
+  for (let round = 0; round < run.rounds; round += 1) {
+    run.check();
+    const startedAt = run.now();
+    for (let index = 0; index < run.spec.ops; index += 1) await pushOnce();
+    const elapsed = roundMs(run.now() - startedAt);
+    run.roundsMs.push(elapsed);
+    run.log(`[bench] push round ${round + 1}/${run.rounds}: ${elapsed} ms`);
+  }
+}
+
+/**
+ * clone: 50 concurrent depth-1 clones of a 200-commit repository, each stream checksum-verified and
+ * not object-parsed (parse: false). The 200-commit history is pushed once in setup. A clone that
+ * receives no pack (or whose checksum fails, which the client throws) fails the workload.
+ */
+async function runClone(run: WorkloadRun): Promise<void> {
+  const git = gitClientOf(run);
+  const rest = restClientOf(run);
+  const owner = ownerOf(run);
+  await recreateRepo(run, git, rest, CLONE_REPO);
+  run.check();
+  const history = buildCloneHistory();
+  run.log(`[bench] clone: built the ${CLONE_HISTORY_COMMITS}-commit history (${history.pack.length} pack bytes)`);
+  const pushed = await git.push(owner, CLONE_REPO, [{ oldOid: ZERO_OID, newOid: history.tip, ref: MAIN_REF }], {
+    pack: history.pack,
+    signal: run.signal,
+    timeoutMs: run.remainingMs(),
+  });
+  assertPushOk(pushed, MAIN_REF);
+  const cloneOnce = async (): Promise<void> => {
+    run.check();
+    const result = await git.clone(owner, CLONE_REPO, {
+      depth: 1,
+      parse: false,
+      singleBranch: true,
+      signal: run.signal,
+      timeoutMs: run.remainingMs(),
+    });
+    if (result.checksumOk !== true) throw new Error('clone: the pack checksum did not verify');
+    if (result.packBytes <= 0) throw new Error('clone: the clone received no packfile');
+    if (result.refs.length === 0) throw new Error('clone: the clone received no refs');
+  };
+  for (let index = 0; index < run.warmupOps; index += 1) await cloneOnce();
+  for (let round = 0; round < run.rounds; round += 1) {
+    run.check();
+    const startedAt = run.now();
+    await Promise.all(Array.from({ length: run.spec.ops }, () => cloneOnce()));
+    const elapsed = roundMs(run.now() - startedAt);
+    run.roundsMs.push(elapsed);
+    run.log(`[bench] clone round ${round + 1}/${run.rounds}: ${elapsed} ms (${run.spec.ops} concurrent)`);
+  }
+}
+
+/**
+ * read: 2,000 sequential GETs of one issue on a warm keep-alive connection. Setup creates the issue
+ * through the REST surface and reads its number; the same RestClient then reuses undici's pooled
+ * socket for every read (the 5 warm-ups come first).
+ */
+async function runRead(run: WorkloadRun): Promise<void> {
+  const git = gitClientOf(run);
+  const rest = restClientOf(run);
+  const owner = ownerOf(run);
+  await recreateRepo(run, git, rest, READ_REPO);
+  run.check();
+  const template = run.scenario.issues[0];
+  if (template === undefined) throw new Error('read: the scenario has no issue template');
+  const created = await rest.post(apiPath('repos', owner, READ_REPO, 'issues'), {
+    body: { title: `${template.title} (bench setup)`, body: template.body },
+    timeoutMs: run.remainingMs(),
+  });
+  if (created.status !== 201) throw new Error(`read: the setup issue create answered ${describeRest(created)}`);
+  const number = issueNumberOf(created.body);
+  if (number === null) throw new Error('read: the setup issue create answered no numeric issue number');
+  const path = apiPath('repos', owner, READ_REPO, 'issues', number);
+  const readOnce = async (): Promise<void> => {
+    run.check();
+    const response = await rest.get(path, { timeoutMs: run.remainingMs() });
+    if (response.status !== 200) throw new Error(`read: GET issue ${number} answered ${describeRest(response)}`);
+    if (typeof response.body !== 'object' || response.body === null) throw new Error(`read: GET issue ${number} answered no JSON object body`);
+  };
+  for (let index = 0; index < run.warmupOps; index += 1) await readOnce();
+  for (let round = 0; round < run.rounds; round += 1) {
+    run.check();
+    const startedAt = run.now();
+    for (let index = 0; index < run.spec.ops; index += 1) await readOnce();
+    const elapsed = roundMs(run.now() - startedAt);
+    run.roundsMs.push(elapsed);
+    run.log(`[bench] read round ${round + 1}/${run.rounds}: ${elapsed} ms`);
+  }
+}
+
+/**
+ * write: 200 sequential issue creations. Every title is built before the warm-ups; a create that is
+ * not a 201 (GitHub's create-issue status) fails the workload.
+ */
+async function runWrite(run: WorkloadRun): Promise<void> {
+  const git = gitClientOf(run);
+  const rest = restClientOf(run);
+  const owner = ownerOf(run);
+  await recreateRepo(run, git, rest, WRITE_REPO);
+  run.check();
+  const total = run.warmupOps + run.rounds * run.spec.ops;
+  const payloads: Array<{ title: string; body: string }> = [];
+  for (let index = 0; index < total; index += 1) {
+    const template = run.scenario.issues[index % run.scenario.issues.length];
+    if (template === undefined) throw new Error('write: the scenario has no issue template');
+    payloads.push({ title: `${template.title} [bench ${index + 1}]`, body: template.body });
+  }
+  const path = apiPath('repos', owner, WRITE_REPO, 'issues');
+  let next = 0;
+  const writeOnce = async (): Promise<void> => {
+    run.check();
+    const payload = payloads[next];
+    if (payload === undefined) throw new Error('write: the pre-built issue list ran out');
+    next += 1;
+    const response = await rest.post(path, { body: payload, timeoutMs: run.remainingMs() });
+    if (response.status !== 201) throw new Error(`write: the issue create answered ${describeRest(response)}`);
+  };
+  for (let index = 0; index < run.warmupOps; index += 1) await writeOnce();
+  for (let round = 0; round < run.rounds; round += 1) {
+    run.check();
+    const startedAt = run.now();
+    for (let index = 0; index < run.spec.ops; index += 1) await writeOnce();
+    const elapsed = roundMs(run.now() - startedAt);
+    run.roundsMs.push(elapsed);
+    run.log(`[bench] write round ${round + 1}/${run.rounds}: ${elapsed} ms`);
+  }
+}
+
+/** The workload bodies, keyed by manifest.ts name. */
+const WORKLOAD_BODIES: Readonly<Record<BenchWorkloadName, (run: WorkloadRun) => Promise<void>>> = Object.freeze({
+  push: runPush,
+  clone: runClone,
+  read: runRead,
+  write: runWrite,
+});
+
+// ---------------------------------------------------------------- one workload's phase
+
+/** What a workload needs from the phase around it. */
+interface PhaseContext {
+  readonly baseUrl: string;
+  readonly token: string;
+  readonly scenario: Scenario;
+  readonly now: () => number;
+  /** The absolute `now()` reading the benchmark phase must stop at. */
+  readonly phaseEnd: number;
+  readonly signal: AbortSignal | undefined;
+  readonly rounds: number;
+  readonly warmupOps: number;
+  readonly log: (line: string) => void;
+}
+
+/**
+ * Run one workload inside its own budget (manifest.ts budgetMs, capped by the phase's end), with a
+ * timer that aborts its in-flight requests at the deadline. Never throws: a failure is the
+ * measurement's `error`, and whatever rounds finished are kept.
+ */
+async function runWorkload(spec: BenchWorkloadSpec, phase: PhaseContext): Promise<WorkloadMeasurement> {
+  const startedAt = phase.now();
+  const deadlineAt = Math.min(startedAt + spec.budgetMs, phase.phaseEnd);
+  if (deadlineAt <= startedAt) {
+    return { name: spec.name, roundsMs: [], expectedRounds: phase.rounds, error: 'the benchmark phase deadline fell before the workload ran' };
+  }
+  const controller = new AbortController();
+  if (phase.signal?.aborted === true) controller.abort();
+  const state = { expired: false };
+  const run: WorkloadRun = {
+    spec,
+    baseUrl: phase.baseUrl,
+    token: phase.token,
+    scenario: phase.scenario,
+    now: phase.now,
+    deadlineAt,
+    signal: controller.signal,
+    rounds: phase.rounds,
+    warmupOps: phase.warmupOps,
+    roundsMs: [],
+    log: phase.log,
+    get expired(): boolean {
+      return state.expired;
+    },
+    set expired(value: boolean) {
+      state.expired = value;
+    },
+    remainingMs(): number {
+      return Math.max(0, deadlineAt - phase.now());
+    },
+    check(): void {
+      if (controller.signal.aborted) {
+        throw new WorkloadStop(state.expired ? 'deadline' : 'aborted', state.expired ? deadlineText(spec) : 'the trial was aborted');
+      }
+      if (phase.now() > deadlineAt) {
+        state.expired = true;
+        controller.abort();
+        throw new WorkloadStop('deadline', deadlineText(spec));
+      }
+    },
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const onAbort = (): void => controller.abort();
+  if (!controller.signal.aborted) {
+    timer = setTimeout(() => {
+      state.expired = true;
+      controller.abort();
+    }, Math.max(1, deadlineAt - phase.now()));
+    phase.signal?.addEventListener('abort', onAbort, { once: true });
+  }
+  try {
+    await WORKLOAD_BODIES[spec.name](run);
+    return { name: spec.name, roundsMs: [...run.roundsMs], expectedRounds: phase.rounds };
+  } catch (err) {
+    // Read the abort state before aborting the workload's own in-flight calls below: an entry's
+    // error (a 404, a refused push) must be recorded as itself, not as the abort we then send.
+    const why =
+      err instanceof WorkloadStop
+        ? err.message
+        : controller.signal.aborted
+          ? state.expired
+            ? deadlineText(spec)
+            : 'the trial was aborted'
+          : errorLine(err);
+    controller.abort();
+    return { name: spec.name, roundsMs: [...run.roundsMs], expectedRounds: phase.rounds, error: why };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    phase.signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+// ---------------------------------------------------------------- the phase
+
+/** Everything runBenchmark accepts. Only baseUrl is required; the rest is the sealed main.ts's. */
+export interface BenchmarkOptions {
+  /** The entry's base URL (wire.ts EntryBase.url), no trailing slash needed. */
+  readonly baseUrl: string;
+  /** The bearer token every API call presents (wire.ts TOKEN_ENV); '' sends none. */
+  readonly token?: string;
+  /** The trial's abort (SIGTERM): ends the workload in flight and marks the rest unrun. */
+  readonly signal?: AbortSignal;
+  /** The env's internal deadline, an absolute performance.now() reading (wire.ts deadline.deadlineMs). */
+  readonly deadlineMs?: number;
+  /** This phase's own budget, ms; default wire.ts BENCHMARK_BUDGET_MS (240 s). */
+  readonly phaseBudgetMs?: number;
+  /** T_ref overrides; omitted slots keep manifest.ts T_REF_MS. 0 means uncalibrated. */
+  readonly tRefs?: Readonly<Partial<Record<BenchWorkloadName, number>>>;
+  /** Timed rounds a workload; default manifest.ts BENCH_ROUNDS (3). A smoke run may pass 1. */
+  readonly rounds?: number;
+  /** Untimed warm-up operations; default manifest.ts BENCH_WARMUP_OPS (5). */
+  readonly warmupOps?: number;
+  /** The workloads to run, in order; default manifest.ts BENCH_WORKLOAD_NAMES (all four). */
+  readonly workloads?: readonly BenchWorkloadName[];
+  /** The monotonic clock; default performance.now. `deadlineMs` is on this clock too. */
+  readonly now?: () => number;
+  /** A diagnostic line per workload and round (stderr in the sealed env); never scored. */
+  readonly log?: (line: string) => void;
+}
+
+/**
+ * Run the benchmark and return the perf.json body (wire.ts PerfFile). Never throws for what the entry
+ * does: every workload's failure is its `error` and 0 points, and a workload the phase never reached
+ * writes p50_ms 1e9 with 0 points (the scorer's ruling). The caller writes the result with
+ * canonicalJsonLine to wire.ts perfFilePath(stateDir).
+ */
+export async function runBenchmark(options: BenchmarkOptions): Promise<PerfFile> {
+  if (typeof options?.baseUrl !== 'string' || options.baseUrl.trim() === '') {
+    throw new TypeError('runBenchmark needs the entry base URL (wire.ts EntryBase.url)');
+  }
+  const baseUrl = options.baseUrl.trim().replace(/\/+$/, '');
+  const token = typeof options.token === 'string' ? options.token : '';
+  const now = options.now ?? ((): number => performance.now());
+  const rounds = clampInt(options.rounds, 1, 25, BENCH_ROUNDS);
+  const warmupOps = clampInt(options.warmupOps, 0, 200, BENCH_WARMUP_OPS);
+  const phaseBudget = finiteOr(options.phaseBudgetMs, BENCH_PHASE_BUDGET_MS);
+  const phaseStart = now();
+  const deadlineMs = finiteOr(options.deadlineMs, Number.POSITIVE_INFINITY);
+  const phaseEnd = Math.min(phaseStart + Math.max(1, phaseBudget), deadlineMs);
+  const log = options.log ?? ((): void => undefined);
+  const scenario = buildScenario();
+
+  const tRefs: Record<BenchWorkloadName, number> = {
+    push: T_REF_MS.push,
+    clone: T_REF_MS.clone,
+    read: T_REF_MS.read,
+    write: T_REF_MS.write,
+  };
+  for (const workload of BENCH_WORKLOADS) {
+    const override = options.tRefs?.[workload.name];
+    if (override !== undefined) tRefs[workload.name] = finiteOr(override, 0);
+  }
+
+  const requested = options.workloads ?? BENCH_WORKLOAD_NAMES;
+  const order: BenchWorkloadName[] = [];
+  const seen = new Set<BenchWorkloadName>();
+  for (const name of requested) {
+    if (!BENCH_WORKLOAD_NAMES.includes(name)) throw new TypeError(`unknown benchmark workload ${JSON.stringify(name)} (the workloads are ${BENCH_WORKLOAD_NAMES.join(', ')})`);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    order.push(name);
+  }
+
+  const phase: Omit<PhaseContext, 'rounds' | 'warmupOps'> = {
+    baseUrl,
+    token,
+    scenario,
+    now,
+    phaseEnd,
+    signal: options.signal,
+    log,
+  };
+  const measurements: WorkloadMeasurement[] = [];
+  for (const name of order) {
+    const spec = benchWorkload(name);
+    if (options.signal?.aborted === true) {
+      measurements.push({ name, roundsMs: [], expectedRounds: rounds, error: 'the trial was aborted before the workload ran' });
+      continue;
+    }
+    if (now() >= phaseEnd) {
+      measurements.push({ name, roundsMs: [], expectedRounds: rounds, error: 'the benchmark phase deadline fell before the workload ran' });
+      continue;
+    }
+    log(`[bench] ${name}: ${spec.ops} op(s) a round, ${rounds} round(s), ${warmupOps} warm-up op(s), ${spec.budgetMs} ms budget`);
+    const measured = await runWorkload(spec, { ...phase, rounds, warmupOps });
+    const tRef = finiteOr(tRefs[name], 0);
+    measurements.push(tRef > 0 ? measured : { ...measured, uncalibrated: true });
+  }
+
+  const tRefsOut = tRefs;
+  const uncalibrated = BENCH_WORKLOADS.filter((workload) => !(finiteOr(tRefsOut[workload.name], 0) > 0)).map((workload) => workload.name);
+  const notes: string[] = [];
+  if (uncalibrated.length > 0) notes.push(`T_ref is uncalibrated (0) for ${uncalibrated.join(', ')}: those workloads earn 0 points`);
+
+  const workloads = measurements.map((measurement) => {
+    const spec = benchWorkload(measurement.name);
+    const result = finishWorkload(spec, measurement, finiteOr(tRefsOut[measurement.name], 0));
+    log(`[bench] ${measurement.name}: p50 ${result.p50_ms} ms, ${result.points} point(s)${result.error !== undefined ? ` (${result.error})` : ''}`);
+    return result;
+  });
+  return perfFileOf(workloads, tRefsOut, notes);
+}
+
+exec
+/bin/bash -lc 'cat git-http.ts' in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+import type {IncomingMessage,ServerResponse} from 'node:http';
+import {Repo,ZERO,pkt,packets,bands,readPack,writePack} from './git-store.ts';
+const flush=Buffer.from('0000'),delim=Buffer.from('0001');
+export function gitHttp(req:IncomingMessage,res:ServerResponse,r:Repo,action:string,body:Buffer,url:URL){
+ const service=action==='info/refs'?url.searchParams.get('service'):action;
+ if(service!=='git-upload-pack'&&service!=='git-receive-pack'){res.writeHead(400);res.end();return;}
+ const upload=service==='git-upload-pack',v2=upload&&String(req.headers['git-protocol']).includes('version=2');
+ const reply=(parts:Buffer[])=>{res.writeHead(200,{'content-type':`application/x-${service}-${action==='info/refs'?'advertisement':'result'}`,'cache-control':'no-cache'});res.end(Buffer.concat(parts));};
+ const refs=()=>{const a:[string,string][]=[];const head=r.refs.get(r.head);if(head)a.push(['HEAD',head]);a.push(...[...r.refs].sort(([a],[b])=>a<b?-1:1));return a;};
+ if(action==='info/refs'){
+  if(v2){reply([pkt('version 2\n'),pkt('ls-refs=unborn\n'),pkt('fetch=shallow\n'),pkt('object-format=sha1\n'),flush]);return;}
+  const caps=upload?`multi_ack_detailed side-band-64k ofs-delta shallow no-progress symref=HEAD:${r.head}`:'report-status side-band-64k delete-refs ofs-delta';
+  const a=refs();if(!a.length)a.push(['capabilities^{}',ZERO]);const parts=[pkt(`# service=${service}\n`),flush];a.forEach(([name,id],i)=>{parts.push(pkt(`${id} ${name}${i===0?'\0'+caps:''}\n`));if(name.startsWith('refs/tags/')&&r.peel(id)!==id)parts.push(pkt(`${r.peel(id)} ${name}^{}\n`));});parts.push(flush);reply(parts);return;
+ }
+ if(!upload){const parsed=packets(body,true),commands=parsed.lines.map(b=>b.toString().split('\0')[0].trim().split(' '));const side=parsed.lines[0]?.toString().includes('side-band-64k');let error='';try{if(body.length>parsed.p)readPack(body.subarray(parsed.p),r);}catch(e){error='invalid pack';}
+ const lines=[pkt(`unpack ${error||'ok'}\n`)];for(const [old,next,ref] of commands){let reason=error?'unpacker error':'';if(!ref?.startsWith('refs/')||!/^([0-9a-f]{40})$/.test(old)||!/^([0-9a-f]{40})$/.test(next))reason='invalid command';else if((r.refs.get(ref)||ZERO)!==old)reason='stale old oid';else if(next!==ZERO&&!r.objects.has(next))reason='missing object';else if(next!==ZERO){try{r.closure([next]);}catch{reason='missing object';}if(!reason&&ref.startsWith('refs/heads/')&&old!==ZERO&&!r.ancestor(old,next))reason='non-fast-forward';}
+ if(!reason){if(next===ZERO)r.refs.delete(ref);else r.refs.set(ref,next);}lines.push(pkt(reason?`ng ${ref} ${reason}\n`:`ok ${ref}\n`));}lines.push(flush);reply(side?[bands(Buffer.from('Processing objects complete\n'),2),bands(Buffer.concat(lines)),flush]:lines);return;
+ }
+ const lines=packets(body).lines.map(b=>b.toString().trim());
+ if(v2&&lines.includes('command=ls-refs')){const prefixes=lines.filter(l=>l.startsWith('ref-prefix ')).map(l=>l.slice(11));const out:Buffer[]=[];for(const [name,id] of refs()){if(prefixes.length&&!prefixes.some(p=>name.startsWith(p)))continue;let attrs='';if(name==='HEAD'&&lines.includes('symrefs'))attrs+=` symref-target:${r.head}`;if(lines.includes('peel')&&r.peel(id)!==id)attrs+=` peeled:${r.peel(id)}`;out.push(pkt(`${id} ${name}${attrs}\n`));}out.push(flush);reply(out);return;}
+ const values=(key:string)=>lines.filter(l=>l.startsWith(key+' ')).map(l=>l.split(' ')[1]);const wants=values('want'),haves=values('have'),oldShallow=new Set(values('shallow'));const depth=Number(values('deepen')[0]||0);if(!wants.length)throw Error('no wants');for(const id of wants)if(!r.objects.has(id))throw Error('unknown want');
+ const selected=new Set<string>(),boundary=new Set<string>();const best=new Map<string,number>();const visit=(id:string,d:number)=>{const o=r.objects.get(id);if(!o)throw Error('missing object');if((best.get(id)??Infinity)<=d)return;best.set(id,d);selected.add(id);if(o.type==='commit'){for(const c of r.links(id,false))visit(c,d);const parents=r.parents(id);if(depth&&d>=depth){if(parents.length)boundary.add(id);return;}boundary.delete(id);for(const p of parents)visit(p,d+1);}else for(const c of r.links(id))visit(c,d);};for(const w of wants)visit(w,1);
+ // A shallow client's haves include only history up to its declared boundaries.
+ const excluded=r.closure(haves,oldShallow);for(const id of excluded)selected.delete(id);
+ const pack=writePack([...selected].map(id=>r.objects.get(id)!));const shallow=[...boundary].map(id=>pkt(`shallow ${id}\n`));const unshallow=[...oldShallow].filter(id=>best.has(id)&&!boundary.has(id)).map(id=>pkt(`unshallow ${id}\n`));
+ const out:Buffer[]=[];if(v2){if(shallow.length||unshallow.length)out.push(pkt('shallow-info\n'),...shallow,...unshallow,delim);out.push(pkt('packfile\n'),bands(pack),flush);}else{if(depth)out.push(...shallow,...unshallow,flush);out.push(pkt('NAK\n'),bands(pack),flush);}reply(out);
+}
+
+exec
+/bin/bash -lc 'cat git-store.ts' in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+import { createHash } from 'node:crypto';
+import { inflateSync, deflateSync } from 'node:zlib';
+export type Obj = {type:string,data:Buffer};
+export const ZERO='0'.repeat(40);
+export function sha(b:Buffer){return createHash('sha1').update(b).digest('hex');}
+export function oid(o:Obj){return sha(Buffer.concat([Buffer.from(`${o.type} ${o.data.length}\0`),o.data]));}
+// Each app owns its repositories; object IDs depend exclusively on canonical Git bytes.
+export class Repo {
+ objects=new Map<string,Obj>(); refs=new Map<string,string>(); head='refs/heads/main';
+ put(o:Obj){const id=oid(o);this.objects.set(id,o);return id;}
+ parents(id:string){const o=this.objects.get(id);return o?.type==='commit'?[...o.data.toString().split('\n\n')[0].matchAll(/^parent ([a-f0-9]{40})$/gm)].map(m=>m[1]):[];}
+ links(id:string,parents=true){const o=this.objects.get(id);if(!o)throw Error('missing object');
+ if(o.type==='commit')return [...o.data.toString().split('\n\n')[0].matchAll(/^(tree|parent) ([a-f0-9]{40})$/gm)].filter(m=>parents||m[1]==='tree').map(m=>m[2]);
+ if(o.type==='tag')return [o.data.toString().match(/^object ([a-f0-9]{40})/)![1]];
+ if(o.type==='tree'){let p=0;const a:string[]=[];while(p<o.data.length){const z=o.data.indexOf(0,p);if(z<0||z+21>o.data.length)throw Error('bad tree');const mode=o.data.subarray(p,o.data.indexOf(32,p)).toString();if(mode!=='160000')a.push(o.data.subarray(z+1,z+21).toString('hex'));p=z+21;}return a;}return [];
+ }
+ closure(tips:string[],stop=new Set<string>()){const seen=new Set<string>();const visit=(id:string)=>{if(seen.has(id))return;seen.add(id);for(const c of this.links(id,!stop.has(id)))visit(c);};for(const t of tips)if(this.objects.has(t))visit(t);return seen;}
+ ancestor(old:string,next:string){const seen=new Set<string>(),q=[next];while(q.length){const id=q.pop()!;if(id===old)return true;if(seen.has(id))continue;seen.add(id);q.push(...this.parents(id));}return false;}
+ peel(id:string){const seen=new Set<string>();while(this.objects.get(id)?.type==='tag'&&!seen.has(id)){seen.add(id);id=this.links(id)[0];}return id;}
+}
+function delta(base:Buffer,d:Buffer){let p=0;const num=()=>{let n=0,s=0,b;do{b=d[p++];n+=(b&127)*2**s;s+=7;}while(b&128);return n;};if(num()!==base.length)throw Error('delta base size');const size=num(),out:Buffer[]=[];let total=0;while(p<d.length){const op=d[p++];if(op&128){let off=0,len=0;for(let i=0;i<4;i++)if(op&(1<<i))off+=d[p++]*2**(8*i);for(let i=0;i<3;i++)if(op&(16<<i))len+=d[p++]*2**(8*i);if(!len)len=65536;if(off+len>base.length)throw Error('delta range');out.push(base.subarray(off,off+len));total+=len;}else{if(!op||p+op>d.length)throw Error('delta instruction');out.push(d.subarray(p,p+op));p+=op;total+=op;}}if(total!==size)throw Error('delta result size');return Buffer.concat(out);}
+// Resolve deltas in passes: REF_DELTA bases may occur later, or live in a previous pack.
+// Nothing enters the repository until the checksum and every object have been validated.
+export function readPack(b:Buffer,r:Repo){if(b.length<32||b.toString('ascii',0,4)!=='PACK'||![2,3].includes(b.readUInt32BE(4))||sha(b.subarray(0,-20))!==b.subarray(-20).toString('hex'))throw Error('invalid pack');let p=12;const entries:any[]=[],byOffset=new Map<number,any>(),resolved=new Map<string,Obj>();
+ for(let i=0;i<b.readUInt32BE(8);i++){const start=p;let c=b[p++],type=(c>>4)&7,size=c&15,shift=4;while(c&128){c=b[p++];size+=(c&127)*2**shift;shift+=7;if(shift>53)throw Error('bad size');}let baseOffset,baseId;if(type===6){c=b[p++];let n=c&127;while(c&128){c=b[p++];n=(n+1)*128+(c&127);}baseOffset=start-n;}else if(type===7){baseId=b.subarray(p,p+20).toString('hex');p+=20;}
+ const z=inflateSync(b.subarray(p,-20),{info:true}) as any;const data=z.buffer as Buffer;p+=z.engine.bytesWritten;if(data.length!==size)throw Error('pack size');const e={start,type,data,baseOffset,baseId,obj:undefined};entries.push(e);byOffset.set(start,e);}
+ if(p!==b.length-20)throw Error('pack trailing bytes');
+ let remaining=entries.length;while(remaining){let progress=0;for(const e of entries){if(e.obj)continue;let o:Obj;if(e.type===6||e.type===7){const base=e.type===6?byOffset.get(e.baseOffset)?.obj:resolved.get(e.baseId)||r.objects.get(e.baseId);if(!base)continue;o={type:base.type,data:delta(base.data,e.data)};}else{const name=({1:'commit',2:'tree',3:'blob',4:'tag'} as any)[e.type];if(!name)throw Error('pack type');o={type:name,data:e.data};}e.obj=o;resolved.set(oid(o),o);remaining--;progress++;}if(!progress)throw Error('unresolved delta');}
+ for(const [id,o] of resolved)r.objects.set(id,o);
+}
+export function writePack(objects:Obj[]){const h=Buffer.alloc(12);h.write('PACK');h.writeUInt32BE(2,4);h.writeUInt32BE(objects.length,8);const parts=[h];for(const o of objects){let n=o.data.length;const type=({commit:1,tree:2,blob:3,tag:4} as any)[o.type];const a=[(type<<4)|(n&15)];n=Math.floor(n/16);while(n){a[a.length-1]|=128;a.push(n&127);n=Math.floor(n/128);}parts.push(Buffer.from(a),deflateSync(o.data));}const b=Buffer.concat(parts);return Buffer.concat([b,Buffer.from(sha(b),'hex')]);}
+export function pkt(s:string|Buffer){const b=Buffer.isBuffer(s)?s:Buffer.from(s);return Buffer.concat([Buffer.from((b.length+4).toString(16).padStart(4,'0')),b]);}
+export function packets(b:Buffer,stop=false){const lines:Buffer[]=[];let p=0;while(p<b.length){const h=b.toString('ascii',p,p+4);if(!/^[a-f0-9]{4}$/i.test(h))throw Error('bad pkt');const n=parseInt(h,16);p+=4;if(n<4){if(n>2)throw Error('bad pkt size');if(stop&&n===0)break;continue;}if(n>65520||p+n-4>b.length)throw Error('truncated pkt');lines.push(b.subarray(p,p+n-4));p+=n-4;}return {lines,p};}
+export function bands(b:Buffer,band=1){const parts:Buffer[]=[];for(let p=0;p<b.length;p+=65000)parts.push(pkt(Buffer.concat([Buffer.from([band]),b.subarray(p,p+65000)])));return Buffer.concat(parts);}
+
+exec
+/bin/bash -lc 'ls tests; cat tests/* | head -100; cat app.ts' in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+stage4.mts
+import {createHash} from 'node:crypto';
+import {Readable} from 'node:stream';
+import {createApp} from '../app.ts';
+import {GRAPHQL_CHECKS,configureGraphQLGit} from '../../git-forge-kit/sdk/conformance/checks-graphql.ts';
+import {MCP_CHECKS} from '../../git-forge-kit/sdk/conformance/checks-mcp.ts';
+import {GIT_CHECKS} from '../../git-forge-kit/sdk/conformance/checks-git.ts';
+import {buildScenario} from '../../git-forge-kit/sdk/conformance/wire.ts';
+import {restChecks,restProtocolChecks} from '../../git-forge-kit/sdk/conformance/checks-rest.ts';
+process.env.MAKEFUN_SHOP_TOKEN='test';
+const app=createApp();
+const replayHash=createHash('sha256');
+globalThis.fetch=async(input:any,init:any={})=>new Promise((resolve,reject)=>{
+ const u=new URL(String(input));const req:any=Readable.from(init.body?[Buffer.from(init.body)]:[]);req.url=u.pathname+u.search;req.method=init.method||'GET';req.headers=Object.fromEntries(new Headers(init.headers).entries());
+ const headers=new Headers();const chunks:Buffer[]=[];const res:any={statusCode:200,headersSent:false,setHeader(k:string,v:any){headers.set(k,String(v));},writeHead(s:number,h:any={}){this.statusCode=s;this.headersSent=true;for(const [k,v]of Object.entries(h))headers.set(k,String(v));},write(b:any){chunks.push(Buffer.from(b));},end(b?:any){if(b)chunks.push(Buffer.from(b));replayHash.update(String(this.statusCode));replayHash.update(JSON.stringify([...headers]));replayHash.update(Buffer.concat(chunks));resolve(new Response(this.statusCode===204?null:Buffer.concat(chunks),{status:this.statusCode,headers}));}};
+ try{app.emit('request',req,res);}catch(e){reject(e);}
+});
+const api=async(method:string,path:string,body?:any)=>{const res=await fetch('http://entry/api/v3'+path,{method,headers:{authorization:'Bearer test'},body:body===undefined?undefined:JSON.stringify(body)});const data=await res.json();if(res.status>=400)throw Error(JSON.stringify(data));return data;};
+configureGraphQLGit({pushBranch:async(r:any)=>{try{const path='/repos/'+r.owner+'/'+r.repo;if(r.from){const branches=await api('GET',path+'/branches');await api('POST',path+'/git/refs',{ref:'refs/heads/'+r.branch,sha:branches.find((b:any)=>b.name===r.from).commit.sha});}await api('PUT',path+'/contents/'+r.path,{branch:r.branch,message:r.message,content:Buffer.from(r.content).toString('base64')});return null;}catch(e){return String(e);}}});
+let passed=0;for(const check of [...GRAPHQL_CHECKS,...GIT_CHECKS,...restChecks(),...restProtocolChecks(),...MCP_CHECKS]){const result=await check.fn({baseUrl:'http://entry',token:'test',scenario:buildScenario(),signal:new AbortController().signal,deadlineMs:Infinity,timeoutMs:15000,log:()=>{}});if(result.ok)passed++;console.log(check.id,JSON.stringify(result));}console.log('TOTAL PASSED',passed,'/ 120');
+
+// Additional wire and identity cases beyond the twenty conformance checks.
+const assert=(ok:any,message:string)=>{if(!ok)throw Error(message);};
+const gql=async(body:any,path='/api/graphql')=>{const r=await fetch('http://entry'+path,{method:'POST',headers:{authorization:'Bearer test'},body:typeof body==='string'?body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
+for(const query of ['{ viewer { login }','{ viewer { noSuchField } }','{viewer(unknown:1){login}}','{repository(owner:3,name:"x"){id}}','query A {viewer{login}} query B {viewer{login}}']){const r=await gql({query});assert(r.status===200&&r.body.errors?.[0]?.message&&!('data'in r.body),'hard errors omit data');}
+assert((await gql('{')).status===400,'malformed JSON is HTTP 400');
+assert((await gql({query:'{viewer{login}}'},'/graphql')).body.data.viewer.login==='adaiversen','short path alias');
+const repo=await api('POST','/user/repos',{name:'batch-identities'});
+const repositoryId=Buffer.from('Repository:'+repo.id).toString('base64');
+const op={query:'mutation($input:CreateIssueInput!){createIssue(input:$input){issue{id number}}}',variables:{input:{repositoryId,title:'batched'}}};
+const batch=(await gql([op,op])).body;
+const left=batch[0].data.createIssue.issue,right=batch[1].data.createIssue.issue;
+assert(left.id!==right.id&&left.number!==right.number,'batched creations have distinct identities');
+const n=(await gql({query:'query($id:ID!){node(id:$id){id ... on Issue {title}}}',variables:{id:right.id}})).body;
+assert(n.data.node.id===right.id&&n.data.node.title==='batched','issue node resolves');
+const selected=(await gql({query:'query A {viewer{login}} query B {user(login:"adaiversen"){login}}',operationName:'B'})).body;
+assert(selected.data.user.login==='adaiversen','operationName selection');
+const page=(await gql({query:'query($o:String!,$n:String!){repository(owner:$o,name:$n){issues(first:1){edges{cursor node{id}} pageInfo{endCursor hasNextPage}}}}',variables:{o:repo.owner.login,n:repo.name}})).body.data.repository.issues;
+assert(page.edges.length===1&&page.edges[0].cursor===page.pageInfo.endCursor&&page.pageInfo.hasNextPage,'connection edges and pageInfo agree');
+console.log('EXTRA WIRE CHECKS PASSED');
+if(passed!==120)throw Error('Conformance regression');
+console.log('REPLAY SHA256',replayHash.digest('hex'));
+import {createServer,type ServerResponse} from 'node:http';
+import {executeGraphQL} from './graphql.ts';
+import {handleMcp} from './mcp.ts';
+import {Repo} from './git-store.ts';
+import {gitHttp} from './git-http.ts';
+import {resolve,treeOf,directorySha,commit,mergeBase,mergeFiles,changedFiles} from './git-rest.ts';
+function json(res:ServerResponse,status:number,body:unknown,headers:Record<string,string>={}){res.writeHead(status,{'content-type':'application/json; charset=utf-8',...headers});res.end(status===204?undefined:JSON.stringify(body)+'\n');}
+type RecordData=Record<string,any>;
+type Repository={git:Repo,meta:RecordData,labels:Map<string,RecordData>,issues:Map<number,RecordData>,pulls:Map<number,RecordData>,comments:Map<number,RecordData[]>,nextNumber:number};
+export function createApp(){
+ const repos=new Map<string,Repository>();let clock=0;
+ const now=()=>new Date(1700000000000+clock*1000).toISOString();
+ const owner='adaiversen',user={login:owner,id:1,type:'User'};
+ return createServer(async(req,res)=>{res.setHeader('x-github-request-id',String(++clock));try{
+ const url=new URL(req.url||'/','http://entry'),path=decodeURIComponent(url.pathname),method=req.method;
+ const send=(status:number,body:unknown,headers:Record<string,string>={})=>json(res,status,body,headers);
+ if(path==='/healthz'){send(200,{ok:true});return;}
+ const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.from(c));const raw=Buffer.concat(chunks);
+ const git=/^\/([^/]+)\/([^/]+)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/.exec(path);
+ if(git){const r=repos.get(git[1]+'/'+git[2]);if(!r){send(404,{message:'Not Found'});return;}gitHttp(req,res,r.git,git[3],raw,url);return;}
+ const token=/^(?:Bearer|token) (.+)$/i.exec(req.headers.authorization||'')?.[1];
+ if(!token||(process.env.MAKEFUN_SHOP_TOKEN&&token!==process.env.MAKEFUN_SHOP_TOKEN)){send(401,path==='/mcp'?{jsonrpc:'2.0',id:null,error:{code:-32000,message:'Bad credentials'}}:{message:'Bad credentials'});return;}
+ if(path==='/mcp'){
+ handleMcp(method,raw,send,(verb,target,args,reply)=>dispatch(verb,new URL(target,'http://entry'),args,reply));return;
+ }
+ if((path==='/api/graphql'||path==='/graphql')&&method==='POST'){
+ let body;try{body=JSON.parse(raw.toString());}catch{send(400,{errors:[{message:'Invalid JSON'}]});return;}
+ send(200,executeGraphQL(body,repos,user,dispatch,()=>{clock++;}));return;
+ }
+ let data:RecordData={};if(raw.length){try{data=JSON.parse(raw.toString());if(!data||typeof data!=='object'||Array.isArray(data))throw Error();}catch{send(400,{message:'Invalid JSON'});return;}}
+ dispatch(method,url,data,send);
+ function dispatch(method:string|undefined,url:URL,data:RecordData,send:(status:number,body:unknown,headers?:Record<string,string>)=>void){
+ const path=decodeURIComponent(url.pathname);
+ const error=(status=404,message='Not Found')=>send(status,{message});
+ const page=(items:unknown[])=>{const per=Math.min(100,Math.max(1,Number(url.searchParams.get('per_page'))||30)),n=Math.max(1,Number(url.searchParams.get('page'))||1),headers:Record<string,string>={};if(n*per<items.length){const next=new URL(url.pathname+url.search,'http://'+(req.headers.host||'entry'));next.searchParams.set('page',String(n+1));headers.link=`<${next}>; rel="next"`;}send(200,items.slice((n-1)*per,n*per),headers);};
+ if((path==='/api/v3'||path==='/api/v3/')&&method==='GET'){send(200,{current_user_url:'/api/v3/user',current_user_repositories_url:'/api/v3/user/repos',repository_url:'/api/v3/repos/{owner}/{repo}',rate_limit_url:'/api/v3/rate_limit'},{'x-oauth-scopes':'repo, read:org'});return;}
+ if(path==='/api/v3/meta'&&method==='GET'){send(200,{installed_version:'1.0'});return;}
+ if(path==='/api/v3/user'&&method==='GET'){send(200,user);return;}
+ if(path==='/api/v3/user/repos'){
+ if(method==='GET'){page([...repos.values()].map(r=>r.meta));return;}
+ if(method==='POST'){
+ if(typeof data.name!=='string'||!data.name||data.name.includes('/')){error(422,'Invalid repository name');return;}
+ const key=owner+'/'+data.name;if(repos.has(key)){error(422,'Repository already exists');return;}
+ const meta={id:clock,node_id:`Repository:${clock}`,name:data.name,full_name:key,owner:user,description:data.description||'',private:!!data.private,default_branch:'main',fork:false,archived:false,disabled:false,created_at:now(),updated_at:now(),pushed_at:null,html_url:`/${key}`,url:`/api/v3/repos/${key}`,clone_url:`/${key}.git`,size:0,open_issues_count:0};
+ repos.set(key,{git:new Repo(),meta,labels:new Map(),issues:new Map(),pulls:new Map(),comments:new Map(),nextNumber:1});send(201,meta);return;
+ }}
+ const m=/^\/api\/v3\/repos\/([^/]+)\/([^/]+)(?:\/(.*))?$/.exec(path);
+ if(!m||m[1]!==owner){error();return;}const key=m[1]+'/'+m[2],r=repos.get(key);if(!r){error();return;}const route=m[3]||'',g=r.git;
+ if(!route){
+ if(method==='DELETE'){repos.delete(key);send(204,null);return;}
+ if(method==='PATCH'){for(const field of ['description','private','default_branch','archived'])if(data[field]!==undefined)r.meta[field]=data[field];g.head='refs/heads/'+r.meta.default_branch;r.meta.updated_at=now();send(200,r.meta);return;}
+ if(method==='GET'){send(200,r.meta);return;}
+ }
+ if(route==='git/refs'&&method==='POST'){
+ if(typeof data.ref!=='string'||!data.ref.startsWith('refs/heads/')||g.refs.has(data.ref)||g.objects.get(data.sha)?.type!=='commit'){error(422,'Invalid reference');return;}g.refs.set(data.ref,data.sha);send(201,{ref:data.ref,object:{type:'commit',sha:data.sha}});return;
+ }
+ if(route==='branches'&&method==='GET'){page([...g.refs].filter(([ref])=>ref.startsWith('refs/heads/')).sort(([a],[b])=>a.localeCompare(b)).map(([ref,sha])=>({name:ref.slice(11),commit:{sha},protected:false})));return;}
+ if(route==='commits'&&method==='GET'){
+ const tip=resolve(g,url.searchParams.get('sha')||r.meta.default_branch);if(!tip){if(g.refs.size)error();else send(200,[]);return;}
+ const seen=new Set<string>(),queue=[tip],items:unknown[]=[];while(queue.length){const id=queue.shift()!;if(seen.has(id))continue;seen.add(id);const raw=g.objects.get(id)!.data.toString(),split=raw.indexOf('\n\n');items.push({sha:id,commit:{message:raw.slice(split+2).replace(/\n$/,''),tree:{sha:raw.match(/^tree (\w+)/)?.[1]}},parents:g.parents(id).map(sha=>({sha}))});queue.push(...g.parents(id));}page(items);return;
+ }
+ if(route==='contents'||route.startsWith('contents/')){
+ const file=route.slice(9).replace(/\/$/,''),branch=data.branch||url.searchParams.get('ref')||r.meta.default_branch,tip=resolve(g,branch),files=treeOf(g,tip),entry=files.get(file);
+ const shape=(p:string,e:{sha:string,mode:string})=>{const blob=g.objects.get(e.sha)!.data;return {type:'file',name:p.split('/').pop(),path:p,sha:e.sha,size:blob.length,encoding:'base64',content:blob.toString('base64')};};
+ if(method==='GET'){
+ if(entry){send(200,shape(file,entry));return;}
+ const prefix=file?file+'/':'',children=new Map<string,unknown>();for(const [p,e]of files){if(!p.startsWith(prefix))continue;const rest=p.slice(prefix.length),slash=rest.indexOf('/');if(slash<0)children.set(rest,shape(p,e));else {const name=rest.slice(0,slash);children.set(name,{type:'dir',name,path:prefix+name,sha:directorySha(g,tip!,prefix+name),size:0});}}
+ if(children.size||(!file&&tip)){send(200,[...children].sort(([a],[b])=>a.localeCompare(b)).map(([,e])=>e));return;}error();return;
+ }
+ if(method==='PUT'||method==='DELETE'){
+ if(!file||file.split('/').some(p=>!p||p==='.'||p==='..')){error(422,'Invalid path');return;}
+ if(!tip&&(g.refs.size||branch!==r.meta.default_branch)){error(404,'Branch not found');return;}
+ if(method==='DELETE'&&!entry){error();return;}
+ if((entry&&data.sha!==entry.sha)||(!entry&&data.sha)){error(409,'sha does not match');return;}
+ if(method==='PUT'&&typeof data.content!=='string'){error(422,'Missing content');return;}
+ let content:unknown=null;if(method==='DELETE')files.delete(file);else{const sha=g.put({type:'blob',data:Buffer.from(data.content,'base64')}),e={sha,mode:entry?.mode||'100644'};files.set(file,e);content=shape(file,e);}
+ const id=commit(g,files,tip?[tip]:[],data.message||'Update '+file,clock);g.refs.set('refs/heads/'+branch,id);r.meta.pushed_at=now();send(method==='PUT'&&!entry?201:200,{content,commit:{sha:id,parents:tip?[{sha:tip}]:[]}});return;
+ }
+ }
+ if(route==='labels'){
+ if(method==='POST'){if(typeof data.name!=='string'||!data.name){error(422,'Invalid label');return;}const label={id:clock,name:data.name,color:data.color||'ededed',description:data.description||''};r.labels.set(data.name,label);send(201,label);return;}
+ if(method==='GET'){page([...r.labels.values()]);return;}
+ }
+ const issueRoute=/^issues(?:\/(\d+)(?:\/(comments))?)?$/.exec(route);
+ if(issueRoute){const number=Number(issueRoute[1]),issue=r.issues.get(number)||r.pulls.get(number);
+ if(!issueRoute[1]){
+ if(method==='POST'){
+ const labels=data.labels||[];if(typeof data.title!=='string'||!data.title||!Array.isArray(labels)||labels.some((name:unknown)=>typeof name!=='string'||!r.labels.has(name))){error(422,'Validation Failed');return;}
+ const n=r.nextNumber++,item={id:clock,number:n,title:data.title,body:data.body||'',state:'open',labels:labels.map((name:string)=>r.labels.get(name)),user,created_at:now(),updated_at:now(),closed_at:null,comments:0};r.issues.set(n,item);r.meta.open_issues_count++;send(201,item);return;
+ }
+ if(method==='GET'){const state=url.searchParams.get('state')||'open',sort=url.searchParams.get('sort')==='updated'?'updated_at':'created_at',dir=url.searchParams.get('direction')==='asc'?1:-1;page([...r.issues.values()].filter(i=>state==='all'||i.state===state).sort((a,b)=>dir*(a[sort].localeCompare(b[sort])||a.number-b.number)));return;}
+ }else if(!issue){error();return;}
+ else if(issueRoute[2]){
+ if(method==='POST'){if(typeof data.body!=='string'){error(422,'Invalid comment');return;}const comment={id:clock,body:data.body,user,created_at:now(),updated_at:now()},comments=r.comments.get(number)||[];comments.push(comment);r.comments.set(number,comments);issue.comments=(issue.comments||0)+1;send(201,comment);return;}
+ if(method==='GET'){page(r.comments.get(number)||[]);return;}
+ }else{
+ if(method==='GET'){send(200,issue);return;}
+ if(method==='PATCH'){if(data.state!==undefined&&!['open','closed'].includes(data.state)){error(422,'Invalid state');return;}for(const field of ['title','body','state'])if(data[field]!==undefined)issue[field]=data[field];issue.updated_at=now();issue.closed_at=issue.state==='closed'?now():null;send(200,issue);return;}
+ }
+ }
+ const prRoute=/^pulls(?:\/(\d+)(?:\/(files|merge))?)?$/.exec(route);
+ if(prRoute){const number=Number(prRoute[1]),pull=r.pulls.get(number);
+ if(!prRoute[1]){
+ if(method==='POST'){
+ const head=typeof data.head==='string'?data.head.split(':').pop():'',base=data.base||r.meta.default_branch,headSha=resolve(g,head),baseSha=resolve(g,base);if(!headSha||!baseSha||!data.title){error(422,'Invalid pull request');return;}
+ const n=r.nextNumber++,item={id:clock,number:n,title:data.title,body:data.body||'',state:'open',head:{ref:head,sha:headSha},base:{ref:base,sha:baseSha},user,labels:[],created_at:now(),updated_at:now(),closed_at:null,merged:false,merged_at:null,merge_commit_sha:null};r.pulls.set(n,item);send(201,item);return;
+ }
+ if(method==='GET'){const state=url.searchParams.get('state')||'open';page([...r.pulls.values()].filter(p=>state==='all'||p.state===state).sort((a,b)=>(url.searchParams.get('direction')==='asc'?1:-1)*(a.number-b.number)));return;}
+ }else if(!pull){error();return;}
+ else if(prRoute[2]==='files'&&method==='GET'){
+ const head=resolve(g,pull.head.ref)||pull.head.sha,base=resolve(g,pull.base.ref)||pull.base.sha;page(changedFiles(g,treeOf(g,mergeBase(g,base,head)),treeOf(g,head)));return;
+ }else if(prRoute[2]==='merge'){
+ if(method==='GET'){send(pull.merged?204:404,pull.merged?null:{message:'Not Found'});return;}
+ if(method==='PUT'){
+ if(pull.state!=='open'){error(405,'Pull Request is not mergeable');return;}
+ const base=resolve(g,pull.base.ref)!,head=resolve(g,pull.head.ref)!;if(!base||!head){error(405,'Pull Request is not mergeable');return;}
+ const files=mergeFiles(g,treeOf(g,mergeBase(g,base,head)),treeOf(g,base),treeOf(g,head));if(!files){pull.mergeable=false;pull.mergeable_state='dirty';send(405,{message:'Pull Request is not mergeable',merged:false});return;}
+ const sha=commit(g,files,[base,head],data.commit_message||`Merge pull request #${number} from ${pull.head.ref}\n\n${pull.title}`,clock);g.refs.set('refs/heads/'+pull.base.ref,sha);Object.assign(pull,{state:'closed',merged:true,merged_at:now(),closed_at:now(),updated_at:now(),merge_commit_sha:sha,mergeable:true,mergeable_state:'clean'});
+ if(pull.base.ref===r.meta.default_branch){let text=pull.body+'\n'+pull.title;const seen=new Set<string>(),queue=[head];while(queue.length){const id=queue.pop()!;if(seen.has(id)||id===mergeBase(g,base,head))continue;seen.add(id);text+='\n'+g.objects.get(id)!.data.toString().split('\n\n').slice(1).join('\n\n');queue.push(...g.parents(id));}for(const match of text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi)){const linked=r.issues.get(Number(match[1]));if(linked)Object.assign(linked,{state:'closed',closed_at:now(),updated_at:now()});}}
+ send(200,{sha,merged:true,message:'Pull Request successfully merged'});return;
+ }
+ }else if(!prRoute[2]&&method==='GET'){send(200,pull);return;}
+ }
+ error();
+ }
+ }catch(e){if(!res.headersSent)json(res,400,{message:e instanceof Error?e.message:'Bad Request'});else res.end();}});
+}
+
+exec
+/bin/bash -lc "git status --short; rg -n 'async function|function .*Workload|clone|push' ~/workspace/makefun/git-forge-kit/program/env/src/bench.ts | tail -35; cat main.ts | head -80; find .. -name AGENTS.md -print" in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+?? codex-forge5.log
+541:    for (let index = 0; index < run.spec.ops; index += 1) await pushOnce();
+543:    run.roundsMs.push(elapsed);
+544:    run.log(`[bench] push round ${round + 1}/${run.rounds}: ${elapsed} ms`);
+549: * clone: 50 concurrent depth-1 clones of a 200-commit repository, each stream checksum-verified and
+550: * not object-parsed (parse: false). The 200-commit history is pushed once in setup. A clone that
+553:async function runClone(run: WorkloadRun): Promise<void> {
+560:  run.log(`[bench] clone: built the ${CLONE_HISTORY_COMMITS}-commit history (${history.pack.length} pack bytes)`);
+561:  const pushed = await git.push(owner, CLONE_REPO, [{ oldOid: ZERO_OID, newOid: history.tip, ref: MAIN_REF }], {
+566:  assertPushOk(pushed, MAIN_REF);
+567:  const cloneOnce = async (): Promise<void> => {
+569:    const result = await git.clone(owner, CLONE_REPO, {
+576:    if (result.checksumOk !== true) throw new Error('clone: the pack checksum did not verify');
+577:    if (result.packBytes <= 0) throw new Error('clone: the clone received no packfile');
+578:    if (result.refs.length === 0) throw new Error('clone: the clone received no refs');
+580:  for (let index = 0; index < run.warmupOps; index += 1) await cloneOnce();
+584:    await Promise.all(Array.from({ length: run.spec.ops }, () => cloneOnce()));
+586:    run.roundsMs.push(elapsed);
+587:    run.log(`[bench] clone round ${round + 1}/${run.rounds}: ${elapsed} ms (${run.spec.ops} concurrent)`);
+596:async function runRead(run: WorkloadRun): Promise<void> {
+624:    run.roundsMs.push(elapsed);
+633:async function runWrite(run: WorkloadRun): Promise<void> {
+644:    payloads.push({ title: `${template.title} [bench ${index + 1}]`, body: template.body });
+662:    run.roundsMs.push(elapsed);
+669:  push: runPush,
+670:  clone: runClone,
+696:async function runWorkload(spec: BenchWorkloadSpec, phase: PhaseContext): Promise<WorkloadMeasurement> {
+751:    // error (a 404, a refused push) must be recorded as itself, not as the abort we then send.
+802:export async function runBenchmark(options: BenchmarkOptions): Promise<PerfFile> {
+819:    push: T_REF_MS.push,
+820:    clone: T_REF_MS.clone,
+836:    order.push(name);
+852:      measurements.push({ name, roundsMs: [], expectedRounds: rounds, error: 'the trial was aborted before the workload ran' });
+856:      measurements.push({ name, roundsMs: [], expectedRounds: rounds, error: 'the benchmark phase deadline fell before the workload ran' });
+862:    measurements.push(tRef > 0 ? measured : { ...measured, uncalibrated: true });
+868:  if (uncalibrated.length > 0) notes.push(`T_ref is uncalibrated (0) for ${uncalibrated.join(', ')}: those workloads earn 0 points`);
+// The entry <-> env lifecycle, as env/src/wire.ts settles it: bind an ephemeral port, tell the env the
+// port it bound, then poll until the env says the trial is over and exit 0. Keep this file as it is:
+// the suite scores the server app.ts builds, and the lifecycle is the harness's, not the contest's.
+//
+//   1. MAKEFUN_ENV_URL names the env's origin (http://store:8080 in a trial container). Without it
+//      there is nothing to talk to, so the program exits 1 at once.
+//   2. Create the server and listen(0): the kernel picks a free port. Never bind 8080 — the env owns it.
+//   3. POST $MAKEFUN_ENV_URL/register {"port": N}. The env records the address the request came from
+//      plus N as your base URL and dials it from then on. The first register wins; a 409 means another
+//      entry already registered, and this process keeps waiting like any other.
+//   4. GET $MAKEFUN_ENV_URL/done until the body is {"done": true}. The env answers at once ({"done":
+//      false} while the suite runs), so this is a poll, not a long-held request. A failed or slow poll
+//      is retried with a short exponential backoff; the process never exits before the env says done.
+//   5. Close the server and exit 0. The harness then stops the env, which writes the export the scorer
+//      reads.
+//
+// main.ts imports its own server and nothing else: no package, no Node built-in, no model call.
+
+import { createApp } from './app.ts';
+
+const ENV_URL = (process.env.MAKEFUN_ENV_URL ?? '').replace(/\/+$/, '');
+if (ENV_URL === '') {
+  process.stderr.write('[entry] MAKEFUN_ENV_URL is not set: there is no env to register with\n');
+  process.exit(1);
+}
+
+/** How long one register or done request may take before it is abandoned and retried. */
+const REQUEST_TIMEOUT_MS = 30_000;
+/** The first wait between retries, and the longest. */
+const RETRY_INITIAL_MS = 250;
+const RETRY_MAX_MS = 2_000;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The wait after `attempt` failed requests: exponential from RETRY_INITIAL_MS, capped. */
+function retryDelay(attempt: number): number {
+  return Math.min(RETRY_MAX_MS, RETRY_INITIAL_MS * 2 ** Math.min(attempt, 8));
+}
+
+/**
+ * POST the bound port until the env accepts it. 200 is the normal answer; 409 means a first register
+ * already won, which is not this process's to fix. 400 and 405 are contract errors and end the program;
+ * a network error or another status is retried, since the env may still be starting.
+ */
+async function register(port: number): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const res = await fetch(`${ENV_URL}/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ port }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (res.status === 200 || res.status === 409) return;
+      if (res.status === 400 || res.status === 405) throw new Error(`register answered HTTP ${res.status}: ${await res.text()}`);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('register answered HTTP ')) throw err;
+    }
+    await sleep(retryDelay(attempt));
+  }
+}
+
+/** Poll GET /done until it answers {"done":true}; never return before that. */
+async function waitForDone(): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const res = await fetch(`${ENV_URL}/done`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      if (res.ok) {
+        const body = (await res.json()) as { done?: unknown };
+        if (body.done === true) return;
+      }
+    } catch {
+      // The env is not answering yet, or the poll timed out: it is not done, so poll again.
+    }
+    await sleep(retryDelay(attempt));
+  }
+}
+
+/** Bound the port, register it, then wait for the env: the whole life of the process. */
+async function main(): Promise<void> {
+
+exec
+/bin/bash -lc "cat > tests/perf.mts <<'EOF'
+// In-process transport, exact kit workload bodies and request/response bytes.
+import {Readable} from 'node:stream';
+import {createApp} from '../app.ts';
+import {runBenchmark} from '../../git-forge-kit/program/env/src/bench.ts';
+process.env.MAKEFUN_SHOP_TOKEN='test';
+const app=createApp();
+globalThis.fetch=async(input:any,init:any={})=>new Promise((resolve,reject)=>{
+ const u=new URL(String(input));const req:any=Readable.from(init.body?[Buffer.from(init.body)]:[]);req.url=u.pathname+u.search;req.method=init.method||'GET';req.headers=Object.fromEntries(new Headers(init.headers).entries());
+ const headers=new Headers();const chunks:Buffer[]=[];const res:any={statusCode:200,headersSent:false,setHeader(k:string,v:any){headers.set(k,String(v));},writeHead(s:number,h:any={}){this.statusCode=s;this.headersSent=true;for(const [k,v]of Object.entries(h))headers.set(k,String(v));},write(b:any){chunks.push(Buffer.from(b));},end(b?:any){if(b)chunks.push(Buffer.from(b));resolve(new Response(this.statusCode===204?null:Buffer.concat(chunks),{status:this.statusCode,headers}));}};
+ try{app.emit('request',req,res);}catch(e){reject(e);}
+});
+console.log(JSON.stringify(await runBenchmark({baseUrl:'http://entry',token:'test',log:console.error}),null,2));
+EOF
+node --experimental-strip-types tests/perf.mts > /tmp/stage5-before.json 2>/tmp/stage5-before.log
+node --experimental-strip-types tests/stage4.mts > /tmp/stage5-regression-before.log" in /home/hatch/workspace/makefun/git-forge
+ succeeded in 3550ms:
+exec
+/bin/bash -lc 'cat /tmp/stage5-before.log; tail -3 /tmp/stage5-regression-before.log' in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+[bench] push: 200 op(s) a round, 3 round(s), 5 warm-up op(s), 60000 ms budget
+[bench] push: built 605 push payload(s) before timing
+[bench] push round 1/3: 374.92 ms
+[bench] push round 2/3: 388.755 ms
+[bench] push round 3/3: 632.977 ms
+[bench] clone: 50 op(s) a round, 3 round(s), 5 warm-up op(s), 60000 ms budget
+[bench] clone: built the 200-commit history (88105 pack bytes)
+[bench] clone round 1/3: 61.754 ms (50 concurrent)
+[bench] clone round 2/3: 29.155 ms (50 concurrent)
+[bench] clone round 3/3: 27.03 ms (50 concurrent)
+[bench] read: 2000 op(s) a round, 3 round(s), 5 warm-up op(s), 60000 ms budget
+[bench] read round 1/3: 173.962 ms
+[bench] read round 2/3: 97.817 ms
+[bench] read round 3/3: 97.426 ms
+[bench] write: 200 op(s) a round, 3 round(s), 5 warm-up op(s), 60000 ms budget
+[bench] write round 1/3: 10.55 ms
+[bench] write round 2/3: 10.027 ms
+[bench] write round 3/3: 10.305 ms
+[bench] push: p50 388.755 ms, 50 point(s)
+[bench] clone: p50 29.155 ms, 50 point(s)
+[bench] read: p50 97.817 ms, 50 point(s)
+[bench] write: p50 10.305 ms, 50 point(s)
+TOTAL PASSED 120 / 120
+EXTRA WIRE CHECKS PASSED
+REPLAY SHA256 1033409883cd9fca744d62b11d90385753624f02330476c0b15f3bce78727445
+
+codex
+The push path walks the entire reachable history on every push, so validation work grows with the repository. Clone requests also rebuild the same pack each time. I’ll add incremental validation and a bounded clone-response cache. The baseline harness uses the kit’s exact workloads over an in-process transport; all 120 checks pass before changes.
+apply patch
+patch: completed
+/home/hatch/workspace/makefun/git-forge/git-http.ts
+/home/hatch/workspace/makefun/git-forge/git-store.ts
+diff --git a/git-http.ts b/git-http.ts
+index 42e9fd1124253e3e258ab35a4af94b91f6571e4c..266b0ce53bf8ae7ea3c8cec03b8b4c726383c8c4
+--- a/git-http.ts
++++ b/git-http.ts
+@@ -18,10 +18,17 @@
+  }
+  const lines=packets(body).lines.map(b=>b.toString().trim());
+  if(v2&&lines.includes('command=ls-refs')){const prefixes=lines.filter(l=>l.startsWith('ref-prefix ')).map(l=>l.slice(11));const out:Buffer[]=[];for(const [name,id] of refs()){if(prefixes.length&&!prefixes.some(p=>name.startsWith(p)))continue;let attrs='';if(name==='HEAD'&&lines.includes('symrefs'))attrs+=` symref-target:${r.head}`;if(lines.includes('peel')&&r.peel(id)!==id)attrs+=` peeled:${r.peel(id)}`;out.push(pkt(`${id} ${name}${attrs}\n`));}out.push(flush);reply(out);return;}
++ // One small successful fetch response per repository; exact request bytes preserve
++ // negotiation, ordering, protocol version and shallow boundaries. Store growth
++ // invalidates the entry, including when a previously missing parent arrives.
++ const cacheKey=body.length<=8192?`${v2}:${body.toString('base64')}`:'';
++ if(cacheKey&&r.fetchCache?.key===cacheKey&&r.fetchCache.version===r.objects.size){reply(r.fetchCache.parts);return;}
+  const values=(key:string)=>lines.filter(l=>l.startsWith(key+' ')).map(l=>l.split(' ')[1]);const wants=values('want'),haves=values('have'),oldShallow=new Set(values('shallow'));const depth=Number(values('deepen')[0]||0);if(!wants.length)throw Error('no wants');for(const id of wants)if(!r.objects.has(id))throw Error('unknown want');
+  const selected=new Set<string>(),boundary=new Set<string>();const best=new Map<string,number>();const visit=(id:string,d:number)=>{const o=r.objects.get(id);if(!o)throw Error('missing object');if((best.get(id)??Infinity)<=d)return;best.set(id,d);selected.add(id);if(o.type==='commit'){for(const c of r.links(id,false))visit(c,d);const parents=r.parents(id);if(depth&&d>=depth){if(parents.length)boundary.add(id);return;}boundary.delete(id);for(const p of parents)visit(p,d+1);}else for(const c of r.links(id))visit(c,d);};for(const w of wants)visit(w,1);
+  // A shallow client's haves include only history up to its declared boundaries.
+  const excluded=r.closure(haves,oldShallow);for(const id of excluded)selected.delete(id);
+  const pack=writePack([...selected].map(id=>r.objects.get(id)!));const shallow=[...boundary].map(id=>pkt(`shallow ${id}\n`));const unshallow=[...oldShallow].filter(id=>best.has(id)&&!boundary.has(id)).map(id=>pkt(`unshallow ${id}\n`));
+- const out:Buffer[]=[];if(v2){if(shallow.length||unshallow.length)out.push(pkt('shallow-info\n'),...shallow,...unshallow,delim);out.push(pkt('packfile\n'),bands(pack),flush);}else{if(depth)out.push(...shallow,...unshallow,flush);out.push(pkt('NAK\n'),bands(pack),flush);}reply(out);
++ const out:Buffer[]=[];if(v2){if(shallow.length||unshallow.length)out.push(pkt('shallow-info\n'),...shallow,...unshallow,delim);out.push(pkt('packfile\n'),bands(pack),flush);}else{if(depth)out.push(...shallow,...unshallow,flush);out.push(pkt('NAK\n'),bands(pack),flush);}
++ if(cacheKey&&out.reduce((n,b)=>n+b.length,0)<=1024*1024)r.fetchCache={key:cacheKey,version:r.objects.size,parts:out};
++ reply(out);
+ }
+diff --git a/git-store.ts b/git-store.ts
+index baf1ee042d31d44c27a3d4b6e94c53bd88107445..de741bd9abb7b2d5b2a584094ee703e7588ea5c3
+--- a/git-store.ts
++++ b/git-store.ts
+@@ -7,6 +7,15 @@
+ // Each app owns its repositories; object IDs depend exclusively on canonical Git bytes.
+ export class Repo {
+  objects=new Map<string,Obj>(); refs=new Map<string,string>(); head='refs/heads/main';
++ // Only complete, successfully traversed immutable object graphs enter this set.
++ // Weak references keep validation metadata bounded by the live object store.
++ private validated=new WeakSet<Obj>();
++ fetchCache?:{key:string,version:number,parts:Buffer[]};
++ validate(tip:string){
++  const seen=new Set<string>(),pending:Obj[]=[];
++  const visit=(id:string)=>{const o=this.objects.get(id);if(!o)throw Error('missing object');if(this.validated.has(o)||seen.has(id))return;seen.add(id);pending.push(o);for(const c of this.links(id))visit(c);};
++  visit(tip);for(const o of pending)this.validated.add(o);
++ }
+  put(o:Obj){const id=oid(o);this.objects.set(id,o);return id;}
+  parents(id:string){const o=this.objects.get(id);return o?.type==='commit'?[...o.data.toString().split('\n\n')[0].matchAll(/^parent ([a-f0-9]{40})$/gm)].map(m=>m[1]):[];}
+  links(id:string,parents=true){const o=this.objects.get(id);if(!o)throw Error('missing object');
+
+exec
+/bin/bash -lc "python3 - <<'PY'
+p='git-http.ts'
+s=open(p).read().replace('r.closure([next]);','r.validate(next);')
+open(p,'w').write(s)
+PY
+node --experimental-strip-types tests/perf.mts > /tmp/stage5-after.json 2>/tmp/stage5-after.log
+node --experimental-strip-types tests/stage4.mts > /tmp/stage5-regression-after.log" in /home/hatch/workspace/makefun/git-forge
+ succeeded in 2681ms:
+exec
+/bin/bash -lc 'cat /tmp/stage5-after.log; tail -3 /tmp/stage5-regression-after.log; git diff --stat; cat tsconfig.json' in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+[bench] push: 200 op(s) a round, 3 round(s), 5 warm-up op(s), 60000 ms budget
+[bench] push: built 605 push payload(s) before timing
+[bench] push round 1/3: 207.543 ms
+[bench] push round 2/3: 124.899 ms
+[bench] push round 3/3: 82.61 ms
+[bench] clone: 50 op(s) a round, 3 round(s), 5 warm-up op(s), 60000 ms budget
+[bench] clone: built the 200-commit history (88105 pack bytes)
+[bench] clone round 1/3: 26.209 ms (50 concurrent)
+[bench] clone round 2/3: 18.827 ms (50 concurrent)
+[bench] clone round 3/3: 20.418 ms (50 concurrent)
+[bench] read: 2000 op(s) a round, 3 round(s), 5 warm-up op(s), 60000 ms budget
+[bench] read round 1/3: 185.486 ms
+[bench] read round 2/3: 138.162 ms
+[bench] read round 3/3: 134.428 ms
+[bench] write: 200 op(s) a round, 3 round(s), 5 warm-up op(s), 60000 ms budget
+[bench] write round 1/3: 11.952 ms
+[bench] write round 2/3: 10.312 ms
+[bench] write round 3/3: 21.427 ms
+[bench] push: p50 124.899 ms, 50 point(s)
+[bench] clone: p50 20.418 ms, 50 point(s)
+[bench] read: p50 138.162 ms, 50 point(s)
+[bench] write: p50 11.952 ms, 50 point(s)
+TOTAL PASSED 120 / 120
+EXTRA WIRE CHECKS PASSED
+REPLAY SHA256 1033409883cd9fca744d62b11d90385753624f02330476c0b15f3bce78727445
+ git-http.ts  | 11 +++++++++--
+ git-store.ts |  9 +++++++++
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["*.ts"]
+}
+
+exec
+/bin/bash -lc "node -e \"require('http').createServer((q,s)=>s.end()).listen(0,'127.0.0.1',function(){console.log(this.address());this.close()})\"" in /home/hatch/workspace/makefun/git-forge
+ exited 1 in 32ms:
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: listen EPERM: operation not permitted 127.0.0.1
+    at Server.setupListenHandle [as _listen2] (node:net:2368:21)
+    at listenInCluster (node:net:2499:12)
+    at node:net:2728:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2478:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EPERM',
+  errno: -1,
+  syscall: 'listen',
+  address: '127.0.0.1'
+}
+
+Node.js v24.22.1
+
+exec
+/bin/bash -lc "mkdir -p /tmp/stage5-baseline
+python3 - <<'PY'
+import subprocess,pathlib
+for p in pathlib.Path('.').glob('*.ts'):
+ pathlib.Path('/tmp/stage5-baseline',p.name).write_bytes(subprocess.check_output(['git','show','HEAD:'+p.name]))
+p=pathlib.Path('tests/perf.mts')
+s=p.read_text().replace(\"import {createApp} from '../app.ts';\", \"const {createApp}=await import(process.env.PERF_APP_MODULE||'../app.ts');\")
+p.write_text(s)
+PY
+for run in 1 2 3; do PERF_APP_MODULE=/tmp/stage5-baseline/app.ts node --experimental-strip-types tests/perf.mts > /tmp/stage5-before-"'$run.json 2>/tmp/stage5-before-$run.log; node --experimental-strip-types tests/perf.mts > /tmp/stage5-after-$run.json 2>/tmp/stage5-after-$run.log; done' in /home/hatch/workspace/makefun/git-forge
+exec
+/bin/bash -lc "cat > tests/stage5.mts <<'EOF'
+import assert from 'node:assert/strict';
+import {Repo,pkt,oid,writePack,readPack} from '../git-store.ts';
+import {gitHttp} from '../git-http.ts';
+const r=new Repo();
+const blob=r.put({type:'blob',data:Buffer.from('hello')});
+const tree=r.put({type:'tree',data:Buffer.concat([Buffer.from('100644 file\\0'),Buffer.from(blob,'hex')])});
+const parent={type:'commit',data:Buffer.from("'`tree ${tree}'"\\n\\nparent\\n"'`)};
+const parentId=oid(parent);
+const child=r.put({type:'"'commit',data:Buffer.from("'`tree ${tree}'"\\nparent "'${parentId}'"\\n\\nchild\\n"'`)});
+// Failed traversal must never mark its partial graph as validated.
+assert.throws(()=>r.validate(child),/missing object/);
+assert.throws(()=>r.validate(child),/missing object/);
+r.put(parent);r.validate(child);r.validate(child);
+// New commits can reuse a fully checked history without traversing it again.
+const next=r.put({type:'"'commit',data:Buffer.from("'`tree ${tree}'"\\nparent "'${child}'"\\n\\nnext\\n"'`)});
+const links=r.links.bind(r);let visits=0;
+r.links=(id,parents=true)=>{visits++;return links(id,parents);};
+r.validate(next);assert.equal(visits,1);
+r.refs.set(r.head,next);
+const fetch=(depth:number,v2=false)=>{
+ const body=Buffer.concat([...(v2?[pkt('"'command=fetch\\n'),Buffer.from('0001')]:[]),pkt("'`want ${next}'"\\n"'`),pkt(`deepen ${depth}'"\\n"'`),pkt('"'done\\n'),Buffer.from('0000')]);
+ let bytes:Buffer|undefined;
+ gitHttp({headers:{'git-protocol':v2?'version=2':''}} as any,{writeHead(){},end(b:Buffer){bytes=b;}} as any,r,'git-upload-pack',body,new URL('http://entry'));
+ return bytes"'!;
+};
+for(const v2 of [false,true])for(const depth of [1,2,0]){
+ const first=fetch(depth,v2),cache=r.fetchCache;
+ assert.ok(cache);assert.deepEqual(fetch(depth,v2),first);assert.equal(r.fetchCache,cache);
+ r.put({type:'"'blob',data:Buffer.from("'`unrelated ${v2} ${depth}`)});
+ assert.deepEqual(fetch(depth,v2),first);assert.notEqual(r.fetchCache,cache);
+}
+// Pack failure remains atomic; successful packs preserve canonical IDs.
+const pack=writePack([parent]);const dest=new Repo();const bad=Buffer.from(pack);bad[bad.length-1]''^=1;
+assert.throws(()=>readPack(bad,dest));assert.equal(dest.objects.size,0);
+readPack(pack,dest);assert.ok(dest.objects.has(parentId));
+console.log('"'STAGE 5 CACHE AND VALIDATION CHECKS PASSED');
+EOF
+node --experimental-strip-types tests/stage5.mts" in /home/hatch/workspace/makefun/git-forge
+ succeeded in 307ms:
+STAGE 5 CACHE AND VALIDATION CHECKS PASSED
+
+codex
+All 120 checks still pass, and the replay hash is byte-identical. The first timing run shows a substantial push improvement and a smaller clone improvement. Read/write timings varied despite those paths being unchanged, so I’m running alternating baseline/current samples. Added checks also pass for failed-validation retries, cache invalidation, protocol variants, and pack atomicity.
+ succeeded in 12370ms:
+exec
+/bin/bash -lc "python3 - <<'PY'
+import json,statistics,pathlib
+for stage in ['before','after']:
+ files=[pathlib.Path(f'/tmp/stage5-{stage}-{i}.json') for i in range(1,4)]
+ if not all(p.exists() and p.stat().st_size for p in files): continue
+ data=[json.loads(p.read_text()) for p in files]
+ print(stage)
+ for name in ['push','clone','read','write']:
+  samples=[next(w for w in d['workloads'] if w['name']==name)['p50_ms'] for d in data]
+  print(name,samples,'median',statistics.median(samples))
+PY
+git diff --check; git diff -- main.ts; git status --short" in /home/hatch/workspace/makefun/git-forge
+ succeeded in 22ms:
+before
+push [522.2, 371.947, 407.901] median 407.901
+clone [27.061, 24.889, 34.78] median 27.061
+read [92.438, 144.708, 98.601] median 98.601
+write [10.111, 10.95, 9.991] median 10.111
+after
+push [121.809, 153.997, 121.837] median 121.837
+clone [21.162, 18.484, 19.81] median 19.81
+read [92.945, 129.8, 94.489] median 94.489
+write [10.279, 11.842, 15.656] median 11.842
+ M git-http.ts
+ M git-store.ts
+?? codex-forge5.log
+?? tests/perf.mts
+?? tests/stage5.mts
+
+exec
+/bin/bash -lc "cat > tests/STAGE5.md <<'EOF'
+Stage 5 performance tuning
+==========================
+
+Production changes are limited to git-store.ts and git-http.ts. main.ts is unchanged.
+
+Receive-pack now validates only the new portion of the reachable object graph.
+A repository-local WeakSet records object identities only after the entire traversal
+succeeds. Missing objects still reject the push, failed traversals do not populate
+the cache, and ref/fast-forward checks still execute for every command. Objects
+enter the store through their canonical Git hash and are immutable. Metadata does
+not keep discarded objects alive. This removes repeated full-history traversal
+from sequential pushes without changing closure() used for fetch negotiation.
+
+Upload-pack retains one successful response per repository, capped at 1 MiB with
+request keys capped at 8 KiB. Keys include exact request bytes and protocol version;
+object-store growth invalidates the response. Advertisements and ls-refs remain
+live. The cached bytes include all shallow/unshallow and sideband framing, so hits
+are byte-identical to generation. Repository deletion releases its cache.
+
+Reproduce:
+
+    node --experimental-strip-types tests/stage4.mts
+    node --experimental-strip-types tests/stage5.mts
+    node --experimental-strip-types tests/perf.mts
+
+The performance harness imports the kit's program/env/src/bench.ts directly and
+uses its exact payloads, warmups, rounds, concurrency and clients. An in-process
+HTTP adapter replaces fetch because this sandbox rejects listen() with EPERM.
+Thus these are comparative server-path timings, not official network timings or
+predicted scores. PERF_APP_MODULE can select an absolute baseline app.ts path.
+Baseline files were extracted from HEAD into /tmp/stage5-baseline before changes.
+Three alternating baseline/current runs, each with three kit rounds, yielded the
+following medians of run p50 values (milliseconds per workload round):
+
+| Workload | Baseline run p50s | Current run p50s | Median before | Median after |
+| --- | --- | --- | --- | --- |
+| push, 200 sequential | 522.200, 371.947, 407.901 | 121.809, 153.997, 121.837 | 407.901 | 121.837 |
+| clone, 50 concurrent | 27.061, 24.889, 34.780 | 21.162, 18.484, 19.810 | 27.061 | 19.810 |
+| read, 2000 sequential | 92.438, 144.708, 98.601 | 92.945, 129.800, 94.489 | 98.601 | 94.489 |
+| write, 200 sequential | 10.111, 10.950, 9.991 | 10.279, 11.842, 15.656 | 10.111 | 11.842 |
+
+Push improves about 70%, clone about 27%. Read/write production paths were not
+changed; the small write workload remains noisy and showed a 1.731 ms increase
+in this sample. Official grade-local is needed to assess actual network scores.
+No JSON/HTTP micro-optimizations were added.
+
+Regression: 120/120 conformance checks and extra Stage 4 wire checks pass.
+Stage 5 checks cover failed validation retries, reuse of a validated ancestor,
+fetch cache hits/invalidation across depths and protocol versions, and pack
+checksum failure atomicity. Baseline and optimized Stage 4 response replay SHA256:
+
+    1033409883cd9fca744d62b11d90385753624f02330476c0b15f3bce78727445
+
+No wall-clock or random values were introduced into stored or returned data;
+all runtime dependencies remain Node standard library only.
+EOF
+git diff --check
+node --experimental-strip-types tests/stage4.mts > /tmp/stage5-regression-final.log
+node --experimental-strip-types tests/stage5.mts" in /home/hatch/workspace/makefun/git-forge
+ succeeded in 1183ms:
+STAGE 5 CACHE AND VALIDATION CHECKS PASSED
+
+exec
+/bin/bash -lc 'tail -3 /tmp/stage5-regression-final.log; git diff --numstat; git status --short' in /home/hatch/workspace/makefun/git-forge
+ succeeded in 0ms:
+TOTAL PASSED 120 / 120
+EXTRA WIRE CHECKS PASSED
+REPLAY SHA256 1033409883cd9fca744d62b11d90385753624f02330476c0b15f3bce78727445
+9	2	git-http.ts
+9	0	git-store.ts
+ M git-http.ts
+ M git-store.ts
+?? codex-forge5.log
+?? tests/STAGE5.md
+?? tests/perf.mts
+?? tests/stage5.mts
+
+codex
+Implemented incremental push validation and a bounded clone-response cache.
+
+Harness timings, median across three alternating runs:
+
+| Workload | Before | After |
+|---|---:|---:|
+| Push | 407.901 ms | 121.837 ms |
+| Clone | 27.061 ms | 19.810 ms |
+| Read | 98.601 ms | 94.489 ms |
+| Write | 10.111 ms | 11.842 ms |
+
+Read/write paths are unchanged; write showed a small measured increase.
+
+All **120/120 checks pass**, additional cache checks pass, and replay remains byte-identical. `main.ts` is unchanged; standard-library-only and logical-clock determinism are preserved.
+
+The harness uses exact kit workloads with in-process transport; official network performance remains unverified. Details and reproduction commands: [STAGE5.md](/home/hatch/workspace/makefun/git-forge/tests/STAGE5.md).
+tokens used
+36,481
+Implemented incremental push validation and a bounded clone-response cache.
+
+Harness timings, median across three alternating runs:
+
+| Workload | Before | After |
+|---|---:|---:|
+| Push | 407.901 ms | 121.837 ms |
+| Clone | 27.061 ms | 19.810 ms |
+| Read | 98.601 ms | 94.489 ms |
+| Write | 10.111 ms | 11.842 ms |
+
+Read/write paths are unchanged; write showed a small measured increase.
+
+All **120/120 checks pass**, additional cache checks pass, and replay remains byte-identical. `main.ts` is unchanged; standard-library-only and logical-clock determinism are preserved.
+
+The harness uses exact kit workloads with in-process transport; official network performance remains unverified. Details and reproduction commands: [STAGE5.md](/home/hatch/workspace/makefun/git-forge/tests/STAGE5.md).
