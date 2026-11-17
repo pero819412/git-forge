@@ -1,4 +1,5 @@
 import {createServer,type ServerResponse} from 'node:http';
+import {handleMcp} from './mcp.ts';
 import {Repo} from './git-store.ts';
 import {gitHttp} from './git-http.ts';
 import {resolve,treeOf,directorySha,commit,mergeBase,mergeFiles,changedFiles} from './git-rest.ts';
@@ -12,15 +13,21 @@ export function createApp(){
  return createServer(async(req,res)=>{res.setHeader('x-github-request-id',String(++clock));try{
  const url=new URL(req.url||'/','http://entry'),path=decodeURIComponent(url.pathname),method=req.method;
  const send=(status:number,body:unknown,headers:Record<string,string>={})=>json(res,status,body,headers);
- const error=(status=404,message='Not Found')=>send(status,{message});
- const page=(items:unknown[])=>{const per=Math.min(100,Math.max(1,Number(url.searchParams.get('per_page'))||30)),n=Math.max(1,Number(url.searchParams.get('page'))||1),headers:Record<string,string>={};if(n*per<items.length){const next=new URL(url.pathname+url.search,'http://'+(req.headers.host||'entry'));next.searchParams.set('page',String(n+1));headers.link=`<${next}>; rel="next"`;}send(200,items.slice((n-1)*per,n*per),headers);};
  if(path==='/healthz'){send(200,{ok:true});return;}
  const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.from(c));const raw=Buffer.concat(chunks);
  const git=/^\/([^/]+)\/([^/]+)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/.exec(path);
- if(git){const r=repos.get(git[1]+'/'+git[2]);if(!r){error();return;}gitHttp(req,res,r.git,git[3],raw,url);return;}
+ if(git){const r=repos.get(git[1]+'/'+git[2]);if(!r){send(404,{message:'Not Found'});return;}gitHttp(req,res,r.git,git[3],raw,url);return;}
  const token=/^(?:Bearer|token) (.+)$/i.exec(req.headers.authorization||'')?.[1];
- if(!token||(process.env.MAKEFUN_SHOP_TOKEN&&token!==process.env.MAKEFUN_SHOP_TOKEN)){error(401,'Bad credentials');return;}
- let data:RecordData={};if(raw.length){try{data=JSON.parse(raw.toString());if(!data||typeof data!=='object'||Array.isArray(data))throw Error();}catch{error(400,'Invalid JSON');return;}}
+ if(!token||(process.env.MAKEFUN_SHOP_TOKEN&&token!==process.env.MAKEFUN_SHOP_TOKEN)){send(401,path==='/mcp'?{jsonrpc:'2.0',id:null,error:{code:-32000,message:'Bad credentials'}}:{message:'Bad credentials'});return;}
+ if(path==='/mcp'){
+ handleMcp(method,raw,send,(verb,target,args,reply)=>dispatch(verb,new URL(target,'http://entry'),args,reply));return;
+ }
+ let data:RecordData={};if(raw.length){try{data=JSON.parse(raw.toString());if(!data||typeof data!=='object'||Array.isArray(data))throw Error();}catch{send(400,{message:'Invalid JSON'});return;}}
+ dispatch(method,url,data,send);
+ function dispatch(method:string|undefined,url:URL,data:RecordData,send:(status:number,body:unknown,headers?:Record<string,string>)=>void){
+ const path=decodeURIComponent(url.pathname);
+ const error=(status=404,message='Not Found')=>send(status,{message});
+ const page=(items:unknown[])=>{const per=Math.min(100,Math.max(1,Number(url.searchParams.get('per_page'))||30)),n=Math.max(1,Number(url.searchParams.get('page'))||1),headers:Record<string,string>={};if(n*per<items.length){const next=new URL(url.pathname+url.search,'http://'+(req.headers.host||'entry'));next.searchParams.set('page',String(n+1));headers.link=`<${next}>; rel="next"`;}send(200,items.slice((n-1)*per,n*per),headers);};
  if((path==='/api/v3'||path==='/api/v3/')&&method==='GET'){send(200,{current_user_url:'/api/v3/user',current_user_repositories_url:'/api/v3/user/repos',repository_url:'/api/v3/repos/{owner}/{repo}',rate_limit_url:'/api/v3/rate_limit'},{'x-oauth-scopes':'repo, read:org'});return;}
  if(path==='/api/v3/meta'&&method==='GET'){send(200,{installed_version:'1.0'});return;}
  if(path==='/api/v3/user'&&method==='GET'){send(200,user);return;}
@@ -110,5 +117,6 @@ export function createApp(){
  }else if(!prRoute[2]&&method==='GET'){send(200,pull);return;}
  }
  error();
+ }
  }catch(e){if(!res.headersSent)json(res,400,{message:e instanceof Error?e.message:'Bad Request'});else res.end();}});
 }
