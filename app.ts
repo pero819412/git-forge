@@ -1,4 +1,5 @@
 import {createServer,type ServerResponse} from 'node:http';
+import {executeGraphQL} from './graphql.ts';
 import {handleMcp} from './mcp.ts';
 import {Repo} from './git-store.ts';
 import {gitHttp} from './git-http.ts';
@@ -21,6 +22,10 @@ export function createApp(){
  if(!token||(process.env.MAKEFUN_SHOP_TOKEN&&token!==process.env.MAKEFUN_SHOP_TOKEN)){send(401,path==='/mcp'?{jsonrpc:'2.0',id:null,error:{code:-32000,message:'Bad credentials'}}:{message:'Bad credentials'});return;}
  if(path==='/mcp'){
  handleMcp(method,raw,send,(verb,target,args,reply)=>dispatch(verb,new URL(target,'http://entry'),args,reply));return;
+ }
+ if((path==='/api/graphql'||path==='/graphql')&&method==='POST'){
+ let body;try{body=JSON.parse(raw.toString());}catch{send(400,{errors:[{message:'Invalid JSON'}]});return;}
+ send(200,executeGraphQL(body,repos,user,dispatch,()=>{clock++;}));return;
  }
  let data:RecordData={};if(raw.length){try{data=JSON.parse(raw.toString());if(!data||typeof data!=='object'||Array.isArray(data))throw Error();}catch{send(400,{message:'Invalid JSON'});return;}}
  dispatch(method,url,data,send);
