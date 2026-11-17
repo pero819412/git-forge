@@ -3,14 +3,15 @@ import { inflateSync, deflateSync } from 'node:zlib';
 export type Obj = {type:string,data:Buffer};
 export const ZERO='0'.repeat(40);
 export function sha(b:Buffer){return createHash('sha1').update(b).digest('hex');}
-export function oid(o:Obj){return sha(Buffer.concat([Buffer.from(`${o.type} ${o.data.length}\0`),o.data]));}
+export function oid(o:Obj){return createHash('sha1').update(`${o.type} ${o.data.length}\0`).update(o.data).digest('hex');}
 // Each app owns its repositories; object IDs depend exclusively on canonical Git bytes.
 export class Repo {
  objects=new Map<string,Obj>(); refs=new Map<string,string>(); head='refs/heads/main';
  // Only complete, successfully traversed immutable object graphs enter this set.
  // Weak references keep validation metadata bounded by the live object store.
  private validated=new WeakSet<Obj>();
- fetchCache?:{key:string,version:number,parts:Buffer[]};
+ refsCache?:{key:string,bytes:Buffer};
+ fetchCache?:{key:string,version:number,bytes:Buffer};
  validate(tip:string){
   const seen=new Set<string>(),pending:Obj[]=[];
   const visit=(id:string)=>{const o=this.objects.get(id);if(!o)throw Error('missing object');if(this.validated.has(o)||seen.has(id))return;seen.add(id);pending.push(o);for(const c of this.links(id))visit(c);};

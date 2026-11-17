@@ -4,18 +4,21 @@ import {handleMcp} from './mcp.ts';
 import {Repo} from './git-store.ts';
 import {gitHttp} from './git-http.ts';
 import {resolve,treeOf,directorySha,commit,mergeBase,mergeFiles,changedFiles} from './git-rest.ts';
-function json(res:ServerResponse,status:number,body:unknown,headers:Record<string,string>={}){res.writeHead(status,{'content-type':'application/json; charset=utf-8',...headers});res.end(status===204?undefined:JSON.stringify(body)+'\n');}
+const jsonHeaders={'content-type':'application/json; charset=utf-8'};
+function json(res:ServerResponse,status:number,body:unknown,headers?:Record<string,string>){res.writeHead(status,headers?{...jsonHeaders,...headers}:jsonHeaders);res.end(status===204?undefined:JSON.stringify(body)+'\n');}
 type RecordData=Record<string,any>;
 type Repository={git:Repo,meta:RecordData,labels:Map<string,RecordData>,issues:Map<number,RecordData>,pulls:Map<number,RecordData>,comments:Map<number,RecordData[]>,nextNumber:number};
 export function createApp(){
  const repos=new Map<string,Repository>();let clock=0;
- const now=()=>new Date(1700000000000+clock*1000).toISOString();
+ // The logical request clock is the only timestamp input. Reuse its ISO encoding.
+ let timeTick=-1,timeText='';
+ const now=()=>{if(timeTick!==clock){timeText=new Date(1700000000000+clock*1000).toISOString();timeTick=clock;}return timeText;};
  const owner='adaiversen',user={login:owner,id:1,type:'User'};
  return createServer(async(req,res)=>{res.setHeader('x-github-request-id',String(++clock));try{
  const url=new URL(req.url||'/','http://entry'),path=decodeURIComponent(url.pathname),method=req.method;
- const send=(status:number,body:unknown,headers:Record<string,string>={})=>json(res,status,body,headers);
+ const send=(status:number,body:unknown,headers?:Record<string,string>)=>json(res,status,body,headers);
  if(path==='/healthz'){send(200,{ok:true});return;}
- const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.from(c));const raw=Buffer.concat(chunks);
+ const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.isBuffer(c)?c:Buffer.from(c));const raw=chunks.length===1?chunks[0]:Buffer.concat(chunks);
  const git=/^\/([^/]+)\/([^/]+)\.git\/(info\/refs|git-upload-pack|git-receive-pack)$/.exec(path);
  if(git){const r=repos.get(git[1]+'/'+git[2]);if(!r){send(404,{message:'Not Found'});return;}gitHttp(req,res,r.git,git[3],raw,url);return;}
  const token=/^(?:Bearer|token) (.+)$/i.exec(req.headers.authorization||'')?.[1];
@@ -28,9 +31,9 @@ export function createApp(){
  send(200,executeGraphQL(body,repos,user,dispatch,()=>{clock++;}));return;
  }
  let data:RecordData={};if(raw.length){try{data=JSON.parse(raw.toString());if(!data||typeof data!=='object'||Array.isArray(data))throw Error();}catch{send(400,{message:'Invalid JSON'});return;}}
- dispatch(method,url,data,send);
- function dispatch(method:string|undefined,url:URL,data:RecordData,send:(status:number,body:unknown,headers?:Record<string,string>)=>void){
- const path=decodeURIComponent(url.pathname);
+ dispatch(method,url,data,send,path);
+ function dispatch(method:string|undefined,url:URL,data:RecordData,send:(status:number,body:unknown,headers?:Record<string,string>)=>void,decodedPath?:string){
+ const path=decodedPath??decodeURIComponent(url.pathname);
  const error=(status=404,message='Not Found')=>send(status,{message});
  const page=(items:unknown[])=>{const per=Math.min(100,Math.max(1,Number(url.searchParams.get('per_page'))||30)),n=Math.max(1,Number(url.searchParams.get('page'))||1),headers:Record<string,string>={};if(n*per<items.length){const next=new URL(url.pathname+url.search,'http://'+(req.headers.host||'entry'));next.searchParams.set('page',String(n+1));headers.link=`<${next}>; rel="next"`;}send(200,items.slice((n-1)*per,n*per),headers);};
  if((path==='/api/v3'||path==='/api/v3/')&&method==='GET'){send(200,{current_user_url:'/api/v3/user',current_user_repositories_url:'/api/v3/user/repos',repository_url:'/api/v3/repos/{owner}/{repo}',rate_limit_url:'/api/v3/rate_limit'},{'x-oauth-scopes':'repo, read:org'});return;}
